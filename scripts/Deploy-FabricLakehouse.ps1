@@ -53,7 +53,7 @@ Write-Info "Storage Account       : $StorageAccountName"
 # Install Python dependencies
 # ---------------------------------------------------------------------------
 Write-Title "Installing Python dependencies"
-pip install pyodbc azure-identity openpyxl requests --quiet
+pip install pyodbc azure-identity openpyxl requests deltalake pandas pyarrow --quiet
 if ($LASTEXITCODE -ne 0) { throw "pip install failed (exit $LASTEXITCODE)" }
 Write-Success "Python dependencies installed"
 
@@ -63,12 +63,14 @@ Write-Success "Python dependencies installed"
 Write-Title "Setting up Lakehouse tables"
 Push-Location $root
 try {
-    python fabric/scripts/setup_lakehouse.py `
-        --workspace-id $WorkspaceId `
-        --lakehouse-id $LakehouseId `
-        --sql-server   $SqlServer
-    if ($LASTEXITCODE -ne 0) { throw "setup_lakehouse.py failed (exit $LASTEXITCODE)" }
-    Write-Success "Lakehouse tables created"
+    if (-not $WorkspaceId -or -not $LakehouseId) {
+        Write-Warn "WorkspaceId or LakehouseId missing - cannot create Lakehouse tables via OneLake. Skipping."
+    } else {
+        $setupArgs = @("fabric/scripts/setup_lakehouse.py", "--workspace-id", $WorkspaceId, "--lakehouse-id", $LakehouseId)
+        python @setupArgs
+        if ($LASTEXITCODE -ne 0) { throw "setup_lakehouse.py failed (exit $LASTEXITCODE)" }
+        Write-Success "Lakehouse tables created"
+    }
 } finally {
     Pop-Location
 }
@@ -82,10 +84,12 @@ if ($SkipSeed) {
     Write-Title "Seeding Lakehouse data"
     Push-Location $root
     try {
-        python fabric/scripts/seed_data.py `
-            --workspace-id $WorkspaceId `
-            --lakehouse-id $LakehouseId `
-            --sql-server   $SqlServer
+        if (-not $WorkspaceId -or -not $LakehouseId) {
+            Write-Warn "WorkspaceId or LakehouseId missing - cannot seed via OneLake. Skipping."
+        } else {
+            $seedArgs = @("fabric/scripts/seed_data.py", "--workspace-id", $WorkspaceId, "--lakehouse-id", $LakehouseId)
+            python @seedArgs
+        }
         if ($LASTEXITCODE -ne 0) { throw "seed_data.py failed (exit $LASTEXITCODE)" }
         Write-Success "Lakehouse seeded with 13 months of synthetic data"
     } finally {
@@ -100,18 +104,19 @@ Write-Title "Uploading MBR template to Storage"
 
 $templatePath = Join-Path $root "data\templates\mbr_template.pptx"
 if (-not (Test-Path $templatePath)) {
-    throw "Template not found: $templatePath`nPlace mbr_template.pptx in data/templates/ before running this script. See data/templates/README.md."
+    Write-Warn "mbr_template.pptx not found - skipping template upload."
+    Write-Warn "Place the file at data/templates/mbr_template.pptx and re-run Deploy-FabricLakehouse.ps1 to upload it."
+} else {
+    az storage blob upload `
+        --account-name   $StorageAccountName `
+        --container-name templates `
+        --name           mbr_template.pptx `
+        --file           $templatePath `
+        --auth-mode      login `
+        --overwrite      true
+    if ($LASTEXITCODE -ne 0) { throw "Template upload failed (exit $LASTEXITCODE)" }
+    Write-Success "mbr_template.pptx uploaded to templates container"
 }
-
-az storage blob upload `
-    --account-name $StorageAccountName `
-    --container-name templates `
-    --name mbr_template.pptx `
-    --file $templatePath `
-    --auth-mode login `
-    --overwrite true
-if ($LASTEXITCODE -ne 0) { throw "Template upload failed (exit $LASTEXITCODE)" }
-Write-Success "mbr_template.pptx uploaded to templates container"
 
 # ---------------------------------------------------------------------------
 # Upload slide thumbnail placeholders to Storage thumbnails container

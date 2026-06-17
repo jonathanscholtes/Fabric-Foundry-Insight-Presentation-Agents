@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Uses the Fabric REST API to:
-      1. Create Lakehouse 'lh-mbr-trucking' in the specified workspace (idempotent).
+      1. Create Lakehouse 'lh_mbr_trucking' in the specified workspace (idempotent).
       2. Poll the long-running operation until provisioning completes.
       3. Poll GET Lakehouse until sqlEndpointProperties.provisioningStatus = "Success".
       4. Return the SQL analytics endpoint hostname.
@@ -20,7 +20,7 @@
     Fabric workspace GUID.
 
 .PARAMETER LakehouseName
-    Lakehouse display name.  Default: lh-mbr-trucking
+    Lakehouse display name.  Default: lh_mbr_trucking
 
 .PARAMETER UpdateTfvars
     When set, writes the resolved SQL server hostname into infra/terraform.tfvars.
@@ -38,7 +38,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $WorkspaceId,
 
-    [string] $LakehouseName = "lh-mbr-trucking",
+    [string] $LakehouseName = "lh_mbr_trucking",
 
     [switch] $UpdateTfvars
 )
@@ -64,7 +64,6 @@ if (-not $token) {
 
 $headers = @{
     "Authorization" = "Bearer $token"
-    "Content-Type"  = "application/json"
 }
 
 # ---------------------------------------------------------------------------
@@ -81,7 +80,7 @@ function Wait-FabricOperation {
         Start-Sleep -Seconds $interval
         $elapsed += $interval
 
-        $resp = Invoke-RestMethod -Uri $OperationUrl -Headers $headers -Method Get -ErrorAction Stop
+        $resp = Invoke-RestMethod -Uri $OperationUrl -Headers $headers -Method Get -ContentType "application/json" -ErrorAction Stop
         $status = $resp.status
 
         Write-Info "  $($elapsed)s  -  status: $status"
@@ -120,17 +119,28 @@ if ($existing) {
     # ---------------------------------------------------------------------------
     Write-Info "Creating Lakehouse '$LakehouseName'..."
 
-    $body = @{ displayName = $LakehouseName; description = "LONGHAUL MBR trucking data" } | ConvertTo-Json
+    $body = @{ displayName = $LakehouseName; description = "LONGHAUL MBR trucking data" } | ConvertTo-Json -Compress
 
     try {
         $createResp = Invoke-WebRequest `
-            -Uri     "$fabricBase/workspaces/$WorkspaceId/lakehouses" `
-            -Headers $headers `
-            -Method  Post `
-            -Body    $body `
-            -ErrorAction Stop
+            -Uri             "$fabricBase/workspaces/$WorkspaceId/lakehouses" `
+            -Headers         $headers `
+            -Method          Post `
+            -Body            ([System.Text.Encoding]::UTF8.GetBytes($body)) `
+            -ContentType     "application/json" `
+            -UseBasicParsing `
+            -ErrorAction     Stop
     } catch {
-        throw "Lakehouse creation failed: $_"
+        $errBody = $null
+        if ($_.Exception.Response) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($stream)
+                $errBody = $reader.ReadToEnd()
+            } catch {}
+        }
+        $detail = if ($errBody) { " - $errBody" } else { "" }
+        throw "Lakehouse creation failed: $_$detail"
     }
 
     if ($createResp.StatusCode -eq 201) {
@@ -226,5 +236,8 @@ Write-Host "  4. Connect da-mbr-trucking to AI Foundry (connection name: da-mbr-
 Write-Host "  See: docs/fabric-setup.md" -ForegroundColor Gray
 Write-Host ""
 
-# Return the SQL server hostname so callers can capture it
-return $sqlServer
+# Return structured result so callers can capture both values
+[PSCustomObject]@{
+    SqlServer   = $sqlServer
+    LakehouseId = $lakehouseId
+}

@@ -181,7 +181,7 @@ resource "azurerm_container_app" "longhaul_ui" {
 
       env {
         name  = "API_BASE_URL"
-        value = "https://${azurerm_container_app.mbr_api.ingress[0].fqdn}"
+        value = "http://ca-mbr-api"
       }
     }
   }

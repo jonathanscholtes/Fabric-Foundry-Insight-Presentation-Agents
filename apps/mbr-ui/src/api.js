@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+const BASE = '/api';
 
 async function request(method, path, { params, body } = {}) {
   let url = `${BASE}${path}`;

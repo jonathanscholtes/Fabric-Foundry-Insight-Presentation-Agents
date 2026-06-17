@@ -1,10 +1,11 @@
-﻿# Build and push LONGHAUL container images to ACR, then update ACA revisions.
+# Build container images in ACR and update ACA revisions.
+# Uses 'az acr build' - no local Docker daemon required.
 
 param(
     [Parameter(Mandatory=$false)]
     [string]$Registry = "",
 
-    # Resource group name  -  passed from deploy.ps1 Phase 2 to avoid a redundant TF output read.
+    # Resource group name - passed from deploy.ps1 Phase 2 to avoid a redundant TF output read.
     # When omitted the script reads resource_group_name from Terraform outputs directly.
     [Parameter(Mandatory=$false)]
     [string]$ResourceGroup = "",
@@ -38,27 +39,11 @@ if (-not $Registry) {
     }
 }
 
-Write-Info "ACR login server : $Registry"
-
-# ---------------------------------------------------------------------------
-# Retry helper for docker build/push (handles transient Docker Hub rate limits)
-# ---------------------------------------------------------------------------
-function Invoke-Docker {
-    param([string[]]$DockerArgs, [int]$MaxAttempts = 3)
-    for ($i = 1; $i -le $MaxAttempts; $i++) {
-        docker @DockerArgs
-        if ($LASTEXITCODE -eq 0) { return }
-        if ($i -lt $MaxAttempts) {
-            $delay = $i * 30
-            Write-Warn "docker $($DockerArgs[0]) failed (attempt $i/$MaxAttempts) - retrying in ${delay}s..."
-            Start-Sleep -Seconds $delay
-        }
-    }
-    throw "docker $($DockerArgs -join ' ') failed after $MaxAttempts attempts (exit $LASTEXITCODE)"
-}
-
-# Derive registry name (hostname without domain suffix) for 'az acr login'
+# ACR name (hostname without .azurecr.io suffix) required by az acr build --registry
 $registryName = ($Registry -split '\.')[0]
+
+Write-Info "ACR               : $Registry"
+Write-Info "ACR name          : $registryName"
 
 # ---------------------------------------------------------------------------
 # Resolve resource group from param or Terraform outputs
@@ -68,7 +53,7 @@ if (-not $resourceGroup) {
     Write-Info "Reading resource_group_name from Terraform outputs..."
     Push-Location $infraDir
     try {
-        $tfOutputs = terraform output -json 2>$null | ConvertFrom-Json
+        $tfOutputs    = terraform output -json 2>$null | ConvertFrom-Json
         $resourceGroup = if ($tfOutputs -and $tfOutputs.resource_group_name) { $tfOutputs.resource_group_name.value } else { $null }
     } finally {
         Pop-Location
@@ -79,72 +64,89 @@ if (-not $resourceGroup) {
     throw "Could not determine resource_group_name. Pass -ResourceGroup or ensure Terraform outputs are available."
 }
 
-Write-Info "Resource group   : $resourceGroup"
+Write-Info "Resource group    : $resourceGroup"
 
 # ---------------------------------------------------------------------------
-# ACR login
+# Retry helper for az acr build (handles transient ACR Task failures)
 # ---------------------------------------------------------------------------
-Write-Info "Logging in to ACR '$registryName'..."
-az acr login --name $registryName
-if ($LASTEXITCODE -ne 0) { throw "az acr login failed (exit $LASTEXITCODE)" }
+function Invoke-AcrBuild {
+    param(
+        [string]   $RegistryName,
+        [string]   $Image,
+        [string]   $ContextPath,
+        [string[]] $BuildArgs = @(),
+        [int]      $MaxAttempts = 3
+    )
+
+    $acrArgs = @(
+        "acr", "build",
+        "--registry", $RegistryName,
+        "--image",    $Image
+    )
+    foreach ($arg in $BuildArgs) { $acrArgs += @("--build-arg", $arg) }
+    $acrArgs += $ContextPath
+
+    for ($i = 1; $i -le $MaxAttempts; $i++) {
+        Write-Info "az acr build $Image (attempt $i/$MaxAttempts)..."
+        az @acrArgs
+        if ($LASTEXITCODE -eq 0) { return }
+        if ($i -lt $MaxAttempts) {
+            $delay = $i * 30
+            Write-Warn "az acr build failed (attempt $i) - retrying in ${delay}s..."
+            Start-Sleep -Seconds $delay
+        }
+    }
+    throw "az acr build $Image failed after $MaxAttempts attempts (exit $LASTEXITCODE)"
+}
 
 # ---------------------------------------------------------------------------
-# Build and push mbr-api
+# Build mbr-api
 # ---------------------------------------------------------------------------
 Write-Title "Building mbr-api"
-$mbrApiImage = "$Registry/mbr-api:latest"
-Invoke-Docker @("build", "-t", $mbrApiImage, "$root\apps\mbr-api")
-Invoke-Docker @("push", $mbrApiImage)
-Write-Success "mbr-api pushed: $mbrApiImage"
+Invoke-AcrBuild -RegistryName $registryName `
+                -Image        "mbr-api:latest" `
+                -ContextPath  "$root\apps\mbr-api"
+Write-Success "mbr-api built and pushed"
 
 # ---------------------------------------------------------------------------
-# Build and push mbr-tools-mcp
+# Build mbr-tools-mcp
 # ---------------------------------------------------------------------------
 Write-Title "Building mbr-tools-mcp"
-$mbrToolsImage = "$Registry/mbr-tools-mcp:latest"
-Invoke-Docker @("build", "-t", $mbrToolsImage, "$root\apps\mbr-tools-mcp")
-Invoke-Docker @("push", $mbrToolsImage)
-Write-Success "mbr-tools-mcp pushed: $mbrToolsImage"
+Invoke-AcrBuild -RegistryName $registryName `
+                -Image        "mbr-tools-mcp:latest" `
+                -ContextPath  "$root\apps\mbr-tools-mcp"
+Write-Success "mbr-tools-mcp built and pushed"
 
 # ---------------------------------------------------------------------------
-# Build and push mbr-ui
+# Build mbr-ui  (VITE_API_BASE_URL baked at build time)
 # ---------------------------------------------------------------------------
 Write-Title "Building mbr-ui"
-$longhaulUiImage = "$Registry/mbr-ui:latest"
-Invoke-Docker @("build", "-t", $longhaulUiImage, "$root\apps\mbr-ui")
-Invoke-Docker @("push", $longhaulUiImage)
-Write-Success "mbr-ui pushed: $longhaulUiImage"
+Invoke-AcrBuild -RegistryName $registryName `
+                -Image        "mbr-ui:latest" `
+                -ContextPath  "$root\apps\mbr-ui" `
+                -BuildArgs    @("VITE_API_BASE_URL=/api")
+Write-Success "mbr-ui built and pushed"
 
 # ---------------------------------------------------------------------------
 # Update ACA revisions
 # ---------------------------------------------------------------------------
 Write-Title "Updating Container App revisions"
 
-Write-Info "Updating ca-mbr-api..."
-az containerapp update `
-    --name "ca-mbr-api" `
-    --resource-group $resourceGroup `
-    --image $mbrApiImage `
-    --output none
-if ($LASTEXITCODE -ne 0) { throw "az containerapp update ca-mbr-api failed (exit $LASTEXITCODE)" }
-Write-Success "ca-mbr-api updated"
+$images = @{
+    "ca-mbr-api"       = "$Registry/mbr-api:latest"
+    "ca-mbr-tools-mcp" = "$Registry/mbr-tools-mcp:latest"
+    "ca-mbr-ui"        = "$Registry/mbr-ui:latest"
+}
 
-Write-Info "Updating ca-mbr-tools-mcp..."
-az containerapp update `
-    --name "ca-mbr-tools-mcp" `
-    --resource-group $resourceGroup `
-    --image $mbrToolsImage `
-    --output none
-if ($LASTEXITCODE -ne 0) { throw "az containerapp update ca-mbr-tools-mcp failed (exit $LASTEXITCODE)" }
-Write-Success "ca-mbr-tools-mcp updated"
+foreach ($app in $images.Keys) {
+    Write-Info "Updating $app..."
+    az containerapp update `
+        --name           $app `
+        --resource-group $resourceGroup `
+        --image          $images[$app] `
+        --output         none
+    if ($LASTEXITCODE -ne 0) { throw "az containerapp update $app failed (exit $LASTEXITCODE)" }
+    Write-Success "$app updated"
+}
 
-Write-Info "Updating ca-mbr-ui..."
-az containerapp update `
-    --name "ca-mbr-ui" `
-    --resource-group $resourceGroup `
-    --image $longhaulUiImage `
-    --output none
-if ($LASTEXITCODE -ne 0) { throw "az containerapp update ca-mbr-ui failed (exit $LASTEXITCODE)" }
-Write-Success "ca-mbr-ui updated"
-
-Write-Success "All container images built, pushed, and ACA revisions updated."
+Write-Success "All images built in ACR and Container App revisions updated."

@@ -54,7 +54,11 @@ param (
 
     # Skip seed_data.py (tables still created; useful on re-runs when data already exists).
     [Parameter(Mandatory = $false)]
-    [switch]$SkipSeed
+    [switch]$SkipSeed,
+
+    # Skip Phase 2 container build and push (infra already has images).
+    [Parameter(Mandatory = $false)]
+    [switch]$SkipContainers
 )
 
 Set-StrictMode -Version Latest
@@ -287,18 +291,22 @@ if ($script:AiAccountId) {
 # ---------------------------------------------------------------------------
 # PHASE 2: Build and push container images
 # ---------------------------------------------------------------------------
-Write-Host "`n=== PHASE 2: Container Build and Push ===" -ForegroundColor Magenta
+if ($SkipContainers) {
+    Write-Host "`n=== PHASE 2: Container Build and Push - Skipped (-SkipContainers) ===" -ForegroundColor DarkGray
+} else {
+    Write-Host "`n=== PHASE 2: Container Build and Push ===" -ForegroundColor Magenta
 
-& "$scripts\Deploy-Containers.ps1" `
-    -Registry      $script:AcrLoginSrv `
-    -ResourceGroup $script:RgName
+    & "$scripts\Deploy-Containers.ps1" `
+        -Registry      $script:AcrLoginSrv `
+        -ResourceGroup $script:RgName
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Container build/push failed." -ForegroundColor Red
-    exit 1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Container build/push failed." -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host "[OK] Container images built and pushed." -ForegroundColor Green
 }
-
-Write-Host "[OK] Container images built and pushed." -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
 # PHASE 3: Fabric Lakehouse setup
@@ -312,14 +320,16 @@ if ($SkipFabric) {
     # -FabricWorkspaceId is supplied but -FabricSqlServer is not.
     if (-not $FabricSqlServer -and $FabricWorkspaceId) {
         Write-Host "  FabricWorkspaceId supplied  -  creating Lakehouse and discovering SQL endpoint..." -ForegroundColor Cyan
-        $FabricSqlServer = & "$scripts\Deploy-FabricWorkspace.ps1" `
+        $fabricResult = & "$scripts\Deploy-FabricWorkspace.ps1" `
             -WorkspaceId  $FabricWorkspaceId `
             -UpdateTfvars
 
-        if ($LASTEXITCODE -ne 0 -or -not $FabricSqlServer) {
+        if ($LASTEXITCODE -ne 0 -or -not $fabricResult) {
             Write-Warn "Deploy-FabricWorkspace.ps1 failed  -  skipping Lakehouse table setup."
             $FabricSqlServer = ""
         } else {
+            $FabricSqlServer      = $fabricResult.SqlServer
+            $script:LakehouseId   = $fabricResult.LakehouseId
             Write-Host "[OK] Lakehouse created. SQL server: $FabricSqlServer" -ForegroundColor Green
         }
     }
@@ -334,6 +344,7 @@ if ($SkipFabric) {
         & "$scripts\Deploy-FabricLakehouse.ps1" `
             -SqlServer          $FabricSqlServer `
             -WorkspaceId        $FabricWorkspaceId `
+            -LakehouseId        $script:LakehouseId `
             -StorageAccountName $script:StorageAcct `
             -SkipSeed:$SkipSeed
 

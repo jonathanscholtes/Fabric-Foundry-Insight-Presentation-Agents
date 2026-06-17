@@ -110,43 +110,39 @@ jobs:
           tenant-id:       ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: ACR login
-        run: az acr login --name $(echo "${{ needs.infra.outputs.acr }}" | cut -d. -f1)
-
-      - name: Build & push mbr-api
+      - name: Build mbr-api
         run: |
-          IMAGE=${{ needs.infra.outputs.acr }}/mbr-api
-          docker build -t $IMAGE:${{ github.sha }} apps/mbr-api
-          docker push  $IMAGE:${{ github.sha }}
-          docker tag   $IMAGE:${{ github.sha }} $IMAGE:latest
-          docker push  $IMAGE:latest
+          az acr build \
+            --registry $(echo "${{ needs.infra.outputs.acr }}" | cut -d. -f1) \
+            --image    mbr-api:${{ github.sha }} \
+            --image    mbr-api:latest \
+            apps/mbr-api
 
-      - name: Build & push mbr-tools-mcp
+      - name: Build mbr-tools-mcp
         run: |
-          IMAGE=${{ needs.infra.outputs.acr }}/mbr-tools-mcp
-          docker build -t $IMAGE:${{ github.sha }} apps/mbr-tools-mcp
-          docker push  $IMAGE:${{ github.sha }}
-          docker tag   $IMAGE:${{ github.sha }} $IMAGE:latest
-          docker push  $IMAGE:latest
+          az acr build \
+            --registry $(echo "${{ needs.infra.outputs.acr }}" | cut -d. -f1) \
+            --image    mbr-tools-mcp:${{ github.sha }} \
+            --image    mbr-tools-mcp:latest \
+            apps/mbr-tools-mcp
 
-      - name: Build & push mbr-ui
+      - name: Build mbr-ui
         run: |
-          IMAGE=${{ needs.infra.outputs.acr }}/mbr-ui
-          docker build \
+          az acr build \
+            --registry  $(echo "${{ needs.infra.outputs.acr }}" | cut -d. -f1) \
+            --image     mbr-ui:${{ github.sha }} \
+            --image     mbr-ui:latest \
             --build-arg VITE_API_BASE_URL=/api \
-            -t $IMAGE:${{ github.sha }} apps/mbr-ui
-          docker push $IMAGE:${{ github.sha }}
-          docker tag  $IMAGE:${{ github.sha }} $IMAGE:latest
-          docker push $IMAGE:latest
+            apps/mbr-ui
 
       - name: Update Container App revisions
         run: |
           ACR=${{ needs.infra.outputs.acr }}
           RG=${{ needs.infra.outputs.resource_group }}
           SHA=${{ github.sha }}
-          az containerapp update --name ca-mbr-api      --resource-group $RG --image $ACR/mbr-api:$SHA       --output none
-          az containerapp update --name ca-mbr-tools-mcp --resource-group $RG --image $ACR/mbr-tools-mcp:$SHA --output none
-          az containerapp update --name ca-mbr-ui        --resource-group $RG --image $ACR/mbr-ui:$SHA        --output none
+          az containerapp update --name ca-mbr-api       --resource-group $RG --image $ACR/mbr-api:$SHA        --output none
+          az containerapp update --name ca-mbr-tools-mcp --resource-group $RG --image $ACR/mbr-tools-mcp:$SHA  --output none
+          az containerapp update --name ca-mbr-ui        --resource-group $RG --image $ACR/mbr-ui:$SHA         --output none
 
   # ── Job 3: Fabric (optional) ────────────────────────────────────────────────
   fabric:
