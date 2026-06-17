@@ -33,9 +33,16 @@
     Foundry project connection name that stores the MCP server URL.
     Default: mbr-tools-mcp
 
+.PARAMETER FabricDataAgentUrl
+    Direct chat/completions URL of the Fabric Data Agent (da_mbr_trucking).
+    Falls back to Key Vault secret 'fabric-data-agent-url', then Foundry connection fallback.
+
+.PARAMETER FabricConnectionName
+    Foundry connection name for the Fabric Data Agent. Default: da-mbr-trucking
+
 .PARAMETER KeyVaultUri
-    Key Vault URI for MCP URL fallback lookup.  Falls back to KEY_VAULT_URI env var,
-    then to key_vault_uri Terraform output.
+    Key Vault URI for MCP URL and Fabric Data Agent URL fallback lookup.
+    Falls back to KEY_VAULT_URI env var, then to key_vault_uri Terraform output.
 
 .EXAMPLE
     .\scripts\Deploy-FoundryAgents.ps1
@@ -43,12 +50,14 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $ProjectEndpoint     = $env:FOUNDRY_PROJECT_ENDPOINT,
-    [string] $McpServerUrl        = $env:MCP_SERVER_URL,
-    [string] $ModelDeployment     = "gpt-4.1",
-    [string] $MiniModelDeployment = "gpt-4.1-mini",
-    [string] $McpConnectionName   = "mbr-tools-mcp",
-    [string] $KeyVaultUri         = $env:KEY_VAULT_URI
+    [string] $ProjectEndpoint      = $env:FOUNDRY_PROJECT_ENDPOINT,
+    [string] $McpServerUrl         = $env:MCP_SERVER_URL,
+    [string] $ModelDeployment      = "gpt-4.1",
+    [string] $MiniModelDeployment  = "gpt-4.1-mini",
+    [string] $McpConnectionName    = "mbr-tools-mcp",
+    [string] $FabricDataAgentUrl   = $env:FABRIC_DATA_AGENT_URL,
+    [string] $FabricConnectionName = "da-mbr-trucking",
+    [string] $KeyVaultUri          = $env:KEY_VAULT_URI
 )
 
 Set-StrictMode -Version Latest
@@ -95,12 +104,14 @@ if (-not $ProjectEndpoint) {
     throw "-ProjectEndpoint not set and foundry_project_endpoint not in Terraform outputs."
 }
 
-Write-Info "Foundry endpoint      : $ProjectEndpoint"
-Write-Info "MCP server URL        : $(if ($McpServerUrl) { $McpServerUrl } else { '(none - Key Vault or Foundry connection fallback)' })"
-Write-Info "Model deployment      : $ModelDeployment"
-Write-Info "Mini model deployment : $MiniModelDeployment"
-Write-Info "MCP connection        : $McpConnectionName"
-Write-Info "Key Vault URI         : $(if ($KeyVaultUri) { $KeyVaultUri } else { '(not set)' })"
+Write-Info "Foundry endpoint       : $ProjectEndpoint"
+Write-Info "MCP server URL         : $(if ($McpServerUrl) { $McpServerUrl } else { '(none - Key Vault or Foundry connection fallback)' })"
+Write-Info "Model deployment       : $ModelDeployment"
+Write-Info "Mini model deployment  : $MiniModelDeployment"
+Write-Info "MCP connection         : $McpConnectionName"
+Write-Info "Fabric Data Agent URL  : $(if ($FabricDataAgentUrl) { $FabricDataAgentUrl } else { '(none - Key Vault or Foundry connection fallback)' })"
+Write-Info "Fabric connection name : $FabricConnectionName"
+Write-Info "Key Vault URI          : $(if ($KeyVaultUri) { $KeyVaultUri } else { '(not set)' })"
 
 # ---------------------------------------------------------------------------
 # Python venv + dependencies
@@ -128,8 +139,10 @@ $agentArgs = @(
     "--mcp-connection-name",   $McpConnectionName,
     "--output",                $agentIdsFile
 )
-if ($McpServerUrl)  { $agentArgs += @("--mcp-server-url",  $McpServerUrl)  }
-if ($KeyVaultUri)   { $agentArgs += @("--key-vault-uri",   $KeyVaultUri)   }
+if ($McpServerUrl)       { $agentArgs += @("--mcp-server-url",         $McpServerUrl)       }
+if ($KeyVaultUri)        { $agentArgs += @("--key-vault-uri",          $KeyVaultUri)        }
+if ($FabricDataAgentUrl) { $agentArgs += @("--fabric-data-agent-url",  $FabricDataAgentUrl) }
+if ($FabricConnectionName) { $agentArgs += @("--fabric-connection-name", $FabricConnectionName) }
 
 & "$root\.venv\Scripts\python.exe" @agentArgs
 if ($LASTEXITCODE -ne 0) { throw "agents/deploy.py failed (exit $LASTEXITCODE)" }

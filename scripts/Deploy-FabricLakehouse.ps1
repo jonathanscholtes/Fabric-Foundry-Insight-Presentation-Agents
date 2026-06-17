@@ -53,7 +53,7 @@ Write-Info "Storage Account       : $StorageAccountName"
 # Install Python dependencies
 # ---------------------------------------------------------------------------
 Write-Title "Installing Python dependencies"
-pip install pyodbc azure-identity openpyxl requests deltalake pandas pyarrow --quiet
+pip install pyodbc azure-identity openpyxl requests pandas pyarrow azure-storage-file-datalake --quiet
 if ($LASTEXITCODE -ne 0) { throw "pip install failed (exit $LASTEXITCODE)" }
 Write-Success "Python dependencies installed"
 
@@ -152,12 +152,10 @@ if (-not $thumbnails -or $thumbnails.Count -eq 0) {
 Write-Success "Deploy-FabricLakehouse complete."
 Write-Host ""
 Write-Host "=== Next Steps ===" -ForegroundColor Cyan
-Write-Host "  1. Complete Fabric portal steps (Section 11 of project.md):" -ForegroundColor Gray
-Write-Host "       - Create Semantic Model 'sm-mbr-trucking' over the 5 Lakehouse tables" -ForegroundColor Gray
-Write-Host "       - Define all DAX measures (see docs/fabric-setup.md)" -ForegroundColor Gray
+Write-Host "  1. (Optional) Create a Semantic Model for DAX measures:" -ForegroundColor Gray
+Write-Host "       - Create Semantic Model 'sm_mbr_trucking' over the 5 Lakehouse tables" -ForegroundColor Gray
+Write-Host "       - Define DAX measures (see docs/fabric-setup.md)" -ForegroundColor Gray
 Write-Host "       - Mark dim_month as Date Table on period_date column" -ForegroundColor Gray
-Write-Host "       - Create Data Agent 'da-mbr-trucking' over sm-mbr-trucking" -ForegroundColor Gray
-Write-Host "       - Connect da-mbr-trucking to AI Foundry project (connection name: da-mbr-trucking)" -ForegroundColor Gray
 Write-Host "  2. Grant Managed Identity Contributor on the Fabric workspace:" -ForegroundColor Gray
 $clientId = terraform -chdir="$root\infra" output -raw app_identity_client_id 2>$null
 if ($clientId) {

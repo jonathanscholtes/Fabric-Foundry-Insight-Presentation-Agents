@@ -1,27 +1,37 @@
 """Seed the LONGHAUL Lakehouse with 13 months of synthetic data (May 2024 – May 2025).
 
-Writes directly to OneLake as Delta tables. The Fabric SQL analytics endpoint
-is read-only; DML via pyodbc is not supported.
+Approach:
+  1. Upload Parquet files to OneLake Files/staging/ via ADLS Gen2 SDK.
+  2. Call the Fabric Load Tables API to create proper Delta tables from the Parquet.
+
+The Fabric Lakehouse SQL analytics endpoint is read-only. Direct DML/DDL via
+pyodbc and delta-rs direct writes use Delta protocol versions Fabric doesn't support.
 
 Usage:
     python fabric/scripts/seed_data.py \\
         --workspace-id <workspace-guid> \\
         --lakehouse-id <lakehouse-guid> \\
-        [--overwrite]   # replace existing rows instead of appending
+        [--overwrite]
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import logging
+import time
 from datetime import date
 
 import pandas as pd
+import requests
 from azure.identity import DefaultAzureCredential
-from deltalake import write_deltalake
+from azure.storage.filedatalake import DataLakeServiceClient
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("seed_data")
+
+FABRIC_API    = "https://api.fabric.microsoft.com/v1"
+STAGING_FOLDER = "Files/staging"
 
 
 # ── Dimension data ──────────────────────────────────────────────────────────
@@ -101,53 +111,108 @@ def _vehicle_kpis_for(region_id: int, month_id: int, vehicle_type_id: int) -> di
     )
 
 
-def _onelake_path(workspace_id: str, lakehouse_id: str, table_name: str) -> str:
-    return (
-        f"abfss://{workspace_id}@onelake.dfs.fabric.microsoft.com"
-        f"/{lakehouse_id}/Tables/{table_name}"
-    )
+# ── OneLake / Fabric helpers ────────────────────────────────────────────────
 
+def _upload_parquet(fs_client, lakehouse_id: str, table_name: str, df: pd.DataFrame) -> str:
+    """Upload DataFrame as Parquet to Files/staging/ and return the relative path."""
+    rel_path = f"{STAGING_FOLDER}/{table_name}.parquet"
+    onelake_path = f"{lakehouse_id}/{rel_path}"
+
+    buf = io.BytesIO()
+    df.to_parquet(buf, index=False, engine="pyarrow")
+    data = buf.getvalue()
+
+    fc = fs_client.get_file_client(onelake_path)
+    fc.upload_data(data, overwrite=True, length=len(data))
+    log.info("  Uploaded %s (%d bytes)", onelake_path, len(data))
+    return rel_path
+
+
+def _poll_lro(url: str, headers: dict, timeout: int = 300) -> None:
+    elapsed, interval = 0, 10
+    while elapsed < timeout:
+        time.sleep(interval)
+        elapsed += interval
+        resp = requests.get(url, headers=headers, timeout=30)
+        if resp.status_code == 200:
+            status = resp.json().get("status", "").lower()
+            if status in ("succeeded", "completed"):
+                return
+            if status in ("failed", "cancelled"):
+                raise RuntimeError(f"Fabric LRO failed: {resp.text}")
+        log.info("  LRO status check at %ds...", elapsed)
+    raise TimeoutError(f"Fabric LRO timed out after {timeout}s")
+
+
+def _load_table(workspace_id: str, lakehouse_id: str, table_name: str,
+                rel_path: str, fabric_token: str, overwrite: bool) -> None:
+    """Call Fabric Load Tables API to create/overwrite a Delta table from Parquet."""
+    url = (
+        f"{FABRIC_API}/workspaces/{workspace_id}"
+        f"/lakehouses/{lakehouse_id}/tables/{table_name}/load"
+    )
+    headers = {
+        "Authorization": f"Bearer {fabric_token}",
+        "Content-Type":  "application/json",
+    }
+    payload = {
+        "relativePath":  rel_path,
+        "pathType":      "File",
+        "mode":          "Overwrite" if overwrite else "Append",
+        "formatOptions": {"format": "Parquet", "header": True},
+    }
+
+    resp = requests.post(url, json=payload, headers=headers, timeout=30)
+
+    if resp.status_code == 202:
+        op_url = resp.headers.get("Location") or resp.headers.get("x-ms-operation-id", "")
+        if op_url and not op_url.startswith("http"):
+            op_url = f"{FABRIC_API}/operations/{op_url}"
+        if op_url:
+            _poll_lro(op_url, headers)
+    elif resp.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Load table '{table_name}' failed: {resp.status_code} {resp.text}"
+        )
+
+    log.info("  Table ready: %s", table_name)
+
+
+# ── Seeding logic ───────────────────────────────────────────────────────────
 
 def seed(workspace_id: str, lakehouse_id: str, overwrite: bool) -> None:
-    credential = DefaultAzureCredential()
-    token = credential.get_token("https://storage.azure.com/.default").token
-    storage_options = {"bearer_token": token}
-    mode = "overwrite" if overwrite else "append"
+    credential    = DefaultAzureCredential()
+    storage_token = credential.get_token("https://storage.azure.com/.default").token
+    fabric_token  = credential.get_token("https://api.fabric.microsoft.com").token
+
+    fs_client = DataLakeServiceClient(
+        account_url="https://onelake.dfs.fabric.microsoft.com",
+        credential=credential,
+    ).get_file_system_client(workspace_id)
 
     def write(table_name: str, df: pd.DataFrame) -> None:
-        path = _onelake_path(workspace_id, lakehouse_id, table_name)
-        log.info("Writing %s (%d rows, mode=%s)...", table_name, len(df), mode)
-        write_deltalake(path, df, storage_options=storage_options, mode=mode)
-        log.info("  Done: %s", table_name)
+        log.info("Seeding %s (%d rows)...", table_name, len(df))
+        rel = _upload_parquet(fs_client, lakehouse_id, table_name, df)
+        _load_table(workspace_id, lakehouse_id, table_name, rel, fabric_token, overwrite)
 
     write("dim_month", pd.DataFrame(
         DIM_MONTHS,
         columns=["month_id", "period_date", "period_label", "year",
                  "month_num", "month_name", "sort_order"],
     ))
-
     write("dim_region", pd.DataFrame(
         DIM_REGIONS, columns=["region_id", "region_name", "region_code"],
     ))
-
     write("dim_vehicle_type", pd.DataFrame(
         DIM_VEHICLE_TYPES, columns=["vehicle_type_id", "vehicle_type_name"],
     ))
-
-    fact_monthly = [
-        _kpis_for(r[0], m[0])
-        for r in DIM_REGIONS
-        for m in DIM_MONTHS
-    ]
-    write("fact_monthly_kpis", pd.DataFrame(fact_monthly))
-
-    fact_vehicle = [
+    write("fact_monthly_kpis", pd.DataFrame([
+        _kpis_for(r[0], m[0]) for r in DIM_REGIONS for m in DIM_MONTHS
+    ]))
+    write("fact_vehicle_kpis", pd.DataFrame([
         _vehicle_kpis_for(r[0], m[0], vt[0])
-        for r in DIM_REGIONS
-        for m in DIM_MONTHS
-        for vt in DIM_VEHICLE_TYPES[:4]
-    ]
-    write("fact_vehicle_kpis", pd.DataFrame(fact_vehicle))
+        for r in DIM_REGIONS for m in DIM_MONTHS for vt in DIM_VEHICLE_TYPES[:4]
+    ]))
 
     log.info("Seed complete.")
 
@@ -164,7 +229,6 @@ if __name__ == "__main__":
     parser.add_argument("--sql-server", default="")  # retained for CLI compatibility
     parser.add_argument("--overwrite", action="store_true",
                         help="Overwrite existing rows (default: append)")
-    # legacy alias
     parser.add_argument("--truncate", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     main(args.workspace_id, args.lakehouse_id,

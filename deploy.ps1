@@ -246,6 +246,8 @@ $script:KvUri              = if ($tfOutputs) { $tfOutputs.key_vault_uri.value } 
 $script:StorageAcct        = if ($tfOutputs) { $tfOutputs.storage_account_name.value }             else { $null }
 $script:ModelDeployment    = if ($tfOutputs) { $tfOutputs.model_deployment.value }                 else { $null }
 $script:MiniModelDeployment = if ($tfOutputs) { $tfOutputs.mini_model_deployment.value }           else { $null }
+$script:LakehouseId         = ""
+$script:DataAgentUrl        = ""
 
 if ($script:MbrApiUrl)   { Write-Host "  mbr-api URL     : $($script:MbrApiUrl)"   -ForegroundColor Gray }
 if ($script:UiUrl)       { Write-Host "  UI URL          : $($script:UiUrl)"       -ForegroundColor Gray }
@@ -357,6 +359,29 @@ if ($SkipFabric) {
 }
 
 # ---------------------------------------------------------------------------
+# PHASE 3b: Fabric Data Agent
+# ---------------------------------------------------------------------------
+Write-Host "`n=== PHASE 3b: Fabric Data Agent ===" -ForegroundColor Magenta
+
+if ($SkipFabric) {
+    Write-Host "=== PHASE 3b: Skipped (-SkipFabric) ===" -ForegroundColor DarkGray
+} elseif (-not $FabricWorkspaceId -or -not $script:LakehouseId) {
+    Write-Host "  FabricWorkspaceId or LakehouseId not available - skipping Data Agent creation." -ForegroundColor Yellow
+} else {
+    try {
+        $daResult = & "$scripts\Deploy-FabricDataAgent.ps1" `
+            -WorkspaceId $FabricWorkspaceId `
+            -LakehouseId $script:LakehouseId `
+            -KeyVaultUri ($script:KvUri -as [string])
+
+        $script:DataAgentUrl = if ($daResult -and $daResult.DataAgentUrl) { $daResult.DataAgentUrl } else { "" }
+        Write-Host "[OK] Fabric Data Agent configured." -ForegroundColor Green
+    } catch {
+        Write-Host "WARNING: Deploy-FabricDataAgent.ps1 failed - continuing. Error: $_" -ForegroundColor Yellow
+    }
+}
+
+# ---------------------------------------------------------------------------
 # PHASE 4: Deploy Foundry agents
 # ---------------------------------------------------------------------------
 Write-Host "`n=== PHASE 4: Deploy Foundry Agents ===" -ForegroundColor Magenta
@@ -367,10 +392,11 @@ if (-not $script:FoundryEp) {
     $mcpUrl = if ($script:McpFqdn) { "https://$($script:McpFqdn)" } else { $null }
 
     $foundryArgs = @("-ProjectEndpoint", $script:FoundryEp)
-    if ($mcpUrl)                    { $foundryArgs += @("-McpServerUrl",        $mcpUrl) }
-    if ($script:ModelDeployment)    { $foundryArgs += @("-ModelDeployment",     $script:ModelDeployment) }
-    if ($script:MiniModelDeployment){ $foundryArgs += @("-MiniModelDeployment", $script:MiniModelDeployment) }
-    if ($script:KvUri)              { $foundryArgs += @("-KeyVaultUri",         $script:KvUri) }
+    if ($mcpUrl)                     { $foundryArgs += @("-McpServerUrl",         $mcpUrl) }
+    if ($script:ModelDeployment)     { $foundryArgs += @("-ModelDeployment",      $script:ModelDeployment) }
+    if ($script:MiniModelDeployment) { $foundryArgs += @("-MiniModelDeployment",  $script:MiniModelDeployment) }
+    if ($script:KvUri)               { $foundryArgs += @("-KeyVaultUri",          $script:KvUri) }
+    if ($script:DataAgentUrl)        { $foundryArgs += @("-FabricDataAgentUrl",   $script:DataAgentUrl) }
 
     if (-not $mcpUrl) {
         Write-Host "  WARNING: mcp_tools_api_fqdn not in TF outputs - presentation agent deployed without MCP tools." -ForegroundColor Yellow

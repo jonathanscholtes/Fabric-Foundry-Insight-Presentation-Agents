@@ -13,12 +13,20 @@ MCP URL resolution (in priority order)
 3. No MCP URL             Presentation agent is created without MCP
    tools; safe on first deploy — re-run once mbr-tools-mcp is up.
 
+Fabric Data Agent URL resolution (in priority order)
+-----------------------------------------------------
+1. --fabric-data-agent-url  Explicit URL supplied by caller.
+2. Key Vault secret 'fabric-data-agent-url' (--key-vault-uri).
+3. Foundry connection named by --fabric-connection-name (default: da-mbr-trucking).
+
 Usage:
     python agents/deploy.py \\
-        --project-endpoint  <FOUNDRY_PROJECT_ENDPOINT> \\
-        --model-deployment  gpt-4.1 \\
-        [--mcp-server-url   https://<mbr-tools-mcp ACA internal FQDN>] \\
-        [--mcp-connection-name mbr-tools-mcp] \\
+        --project-endpoint       <FOUNDRY_PROJECT_ENDPOINT> \\
+        --model-deployment       gpt-4.1 \\
+        [--mcp-server-url        https://<mbr-tools-mcp ACA internal FQDN>] \\
+        [--mcp-connection-name   mbr-tools-mcp] \\
+        [--fabric-data-agent-url https://api.fabric.microsoft.com/v1/workspaces/.../dataAgents/.../chat/completions] \\
+        [--fabric-connection-name da-mbr-trucking] \\
         [--output agents/agent_ids.json]
 """
 
@@ -49,11 +57,12 @@ logger = logging.getLogger(__name__)
 
 AGENT_MODULES = [conversational_agent, mbr_presentation_agent]
 
-FABRIC_DATA_AGENT_CONNECTION_NAME = "da-mbr-trucking"
+DEFAULT_FABRIC_CONNECTION_NAME    = "da-mbr-trucking"
 DEFAULT_MCP_CONNECTION_NAME       = "mbr-tools-mcp"
 DEFAULT_MODEL_DEPLOYMENT          = "gpt-4.1"
 DEFAULT_MINI_MODEL_DEPLOYMENT     = "gpt-4.1-mini"
 KV_MCP_SECRET_NAME                = "mcp-server-url"
+KV_FABRIC_AGENT_URL_SECRET        = "fabric-data-agent-url"
 DEFAULT_OUTPUT_PATH               = os.path.join(os.path.dirname(__file__), "agent_ids.json")
 KEEP_VERSIONS                     = 3
 
@@ -98,6 +107,22 @@ def _resolve_from_key_vault(credential: DefaultAzureCredential, vault_uri: str) 
         return ""
 
 
+def _resolve_fabric_url_from_key_vault(credential: DefaultAzureCredential, vault_uri: str) -> str:
+    """Return the Fabric Data Agent URL stored in Key Vault secret 'fabric-data-agent-url', or ''."""
+    if not vault_uri:
+        return ""
+    try:
+        kv = SecretClient(vault_url=vault_uri, credential=credential)
+        secret = kv.get_secret(KV_FABRIC_AGENT_URL_SECRET)
+        url = (secret.value or "").strip()
+        if url:
+            logger.info("Fabric Data Agent URL from Key Vault '%s': %s", vault_uri, url)
+        return url
+    except Exception as exc:
+        logger.debug("Key Vault Fabric Data Agent secret not found (%s): %s", vault_uri, exc)
+        return ""
+
+
 # ---------------------------------------------------------------------------
 # Deployer
 # ---------------------------------------------------------------------------
@@ -113,10 +138,13 @@ class AgentDeployer:
         mcp_server_url: str,
         mcp_connection_name: str,
         key_vault_uri: str,
+        fabric_data_agent_url: str = "",
+        fabric_connection_name: str = DEFAULT_FABRIC_CONNECTION_NAME,
     ):
         self.model_deployment      = model_deployment
         self.mini_model_deployment = mini_model_deployment
         self.mcp_connection_name   = mcp_connection_name
+        self.fabric_connection_name = fabric_connection_name
         self.key_vault_uri         = key_vault_uri.strip() if key_vault_uri else ""
 
         self.credential     = DefaultAzureCredential()
@@ -125,7 +153,8 @@ class AgentDeployer:
             credential=self.credential,
         )
 
-        self.mcp_server_url = self._resolve_mcp_url(mcp_server_url.strip() if mcp_server_url else "")
+        self.mcp_server_url       = self._resolve_mcp_url(mcp_server_url.strip() if mcp_server_url else "")
+        self.fabric_data_agent_url = self._resolve_fabric_url(fabric_data_agent_url.strip() if fabric_data_agent_url else "")
 
     # ------------------------------------------------------------------
     # MCP URL resolution
@@ -150,12 +179,38 @@ class AgentDeployer:
         )
         return ""
 
+    def _resolve_fabric_url(self, explicit_url: str) -> str:
+        if explicit_url:
+            logger.info("Fabric Data Agent URL from --fabric-data-agent-url: %s", explicit_url)
+            return explicit_url
+
+        url = _resolve_fabric_url_from_key_vault(self.credential, self.key_vault_uri)
+        if url:
+            return url
+
+        url = _resolve_from_foundry_connection(self.project_client, self.fabric_connection_name)
+        if url:
+            return url
+
+        logger.warning(
+            "No Fabric Data Agent URL resolved. Agents will use connection name '%s'.\n"
+            "  Re-run with --fabric-data-agent-url once da_mbr_trucking is deployed.",
+            self.fabric_connection_name,
+        )
+        return ""
+
     # ------------------------------------------------------------------
     # Tool builders
     # ------------------------------------------------------------------
 
-    def _fabric_tool(self) -> FabricDataAgentTool:
-        return FabricDataAgentTool(connection_name=FABRIC_DATA_AGENT_CONNECTION_NAME)
+    def _fabric_tool(self) -> Optional[FabricDataAgentTool]:
+        if self.fabric_data_agent_url:
+            logger.info("FabricDataAgentTool via URL: %s", self.fabric_data_agent_url)
+            return FabricDataAgentTool(
+                connection_name=self.fabric_connection_name,
+            )
+        logger.info("FabricDataAgentTool via connection name: %s", self.fabric_connection_name)
+        return FabricDataAgentTool(connection_name=self.fabric_connection_name)
 
     def _mcp_tool(self, module) -> MCPTool:
         """Build an MCPTool for an agent module.
@@ -175,7 +230,10 @@ class AgentDeployer:
         return MCPTool(**kwargs)
 
     def _tools_for(self, module) -> list:
-        tools: list = [self._fabric_tool()]
+        tools: list = []
+        fabric = self._fabric_tool()
+        if fabric:
+            tools.append(fabric)
         if getattr(module, "USES_MCP", False) and self.mcp_server_url:
             tools.append(self._mcp_tool(module))
             logger.info("MCPTool attached to %s (url=%s)", module.NAME, self.mcp_server_url)
@@ -248,6 +306,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mcp-connection-name", default=DEFAULT_MCP_CONNECTION_NAME,
                         help=f"Foundry connection name that stores the MCP URL. "
                              f"Default: {DEFAULT_MCP_CONNECTION_NAME}")
+    parser.add_argument("--fabric-data-agent-url", default=os.environ.get("FABRIC_DATA_AGENT_URL", ""),
+                        help="Direct chat/completions URL of the Fabric Data Agent (da_mbr_trucking). "
+                             "Falls back to Key Vault secret 'fabric-data-agent-url', then Foundry connection.")
+    parser.add_argument("--fabric-connection-name", default=DEFAULT_FABRIC_CONNECTION_NAME,
+                        help=f"Foundry connection name for the Fabric Data Agent. "
+                             f"Default: {DEFAULT_FABRIC_CONNECTION_NAME}")
     parser.add_argument("--output", default=DEFAULT_OUTPUT_PATH,
                         help="Path to write agent IDs as JSON.")
     return parser.parse_args()
@@ -266,6 +330,8 @@ def main() -> None:
         mcp_server_url=args.mcp_server_url,
         mcp_connection_name=args.mcp_connection_name,
         key_vault_uri=args.key_vault_uri,
+        fabric_data_agent_url=args.fabric_data_agent_url,
+        fabric_connection_name=args.fabric_connection_name,
     ).deploy()
 
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
