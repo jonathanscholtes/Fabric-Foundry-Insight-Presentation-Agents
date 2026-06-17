@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mbr-api"
+version = "0.1.0"
+description = "LONGHAUL MBR AI Agents — FastAPI REST backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "azure-identity>=1.19",
+    "azure-storage-blob>=12.23",
+    "azure-ai-projects>=1.0",
+    "pyodbc>=5.2",
+    "openpyxl>=3.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]

@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-python:
+    name: Python lint + type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install mbr-api deps
+        run: pip install -r apps/mbr-api/requirements.txt ruff
+
+      - name: Ruff — mbr-api
+        run: ruff check apps/mbr-api/src
+
+      - name: Install mbr-tools-mcp deps
+        run: pip install uv && uv pip install --system -r apps/mbr-tools-mcp/pyproject.toml
+
+      - name: Ruff — mbr-tools-mcp
+        run: ruff check apps/mbr-tools-mcp/src
+
+      - name: Ruff — agents
+        run: ruff check agents
+
+  lint-react:
+    name: React lint + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mbr-ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/mbr-ui/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+        env:
+          VITE_API_BASE_URL: /api
+
+  terraform-validate:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9"
+
+      - name: terraform init (backend=false)
+        run: terraform -chdir=infra init -backend=false
+
+      - name: terraform validate
+        run: terraform -chdir=infra validate

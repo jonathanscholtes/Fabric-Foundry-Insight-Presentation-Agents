@@ -1,0 +1,243 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: dev
+        type: choice
+        options: [dev, staging, prod]
+      skip_infra:
+        description: Skip Terraform (infra already exists)
+        type: boolean
+        default: false
+      skip_fabric:
+        description: Skip Fabric lakehouse setup
+        type: boolean
+        default: false
+      skip_agents:
+        description: Skip Foundry agent deployment
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ── Job 1: Infrastructure ───────────────────────────────────────────────────
+  infra:
+    name: Terraform (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    outputs:
+      acr:                   ${{ steps.tfout.outputs.acr }}
+      resource_group:        ${{ steps.tfout.outputs.resource_group }}
+      foundry_endpoint:      ${{ steps.tfout.outputs.foundry_endpoint }}
+      mcp_fqdn:              ${{ steps.tfout.outputs.mcp_fqdn }}
+      mbr_api_url:           ${{ steps.tfout.outputs.mbr_api_url }}
+      model_deployment:      ${{ steps.tfout.outputs.model_deployment }}
+      mini_model_deployment: ${{ steps.tfout.outputs.mini_model_deployment }}
+      key_vault_uri:         ${{ steps.tfout.outputs.key_vault_uri }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9"
+
+      - name: Terraform init
+        if: ${{ github.event.inputs.skip_infra != 'true' }}
+        run: |
+          terraform -chdir=infra init \
+            -backend-config="resource_group_name=${{ vars.TF_STATE_RG }}" \
+            -backend-config="storage_account_name=${{ vars.TF_STATE_SA }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=${{ github.event.inputs.environment }}.tfstate"
+
+      - name: Terraform apply
+        if: ${{ github.event.inputs.skip_infra != 'true' }}
+        run: |
+          terraform -chdir=infra apply -auto-approve \
+            -var="environment=${{ github.event.inputs.environment }}" \
+            -var="subscription_id=${{ vars.AZURE_SUBSCRIPTION_ID }}" \
+            -var="tenant_id=${{ vars.AZURE_TENANT_ID }}" \
+            -var="fabric_sql_server=${{ vars.FABRIC_SQL_SERVER }}" \
+            -var="fabric_sql_database=${{ vars.FABRIC_SQL_DATABASE }}"
+
+      - name: Export Terraform outputs
+        id: tfout
+        run: |
+          ACR=$(terraform -chdir=infra output -raw container_registry_login_server)
+          RG=$(terraform -chdir=infra output -raw resource_group_name)
+          FOUNDRY=$(terraform -chdir=infra output -raw foundry_project_endpoint)
+          MCP=$(terraform -chdir=infra output -raw mcp_tools_api_fqdn)
+          MBR_API=$(terraform -chdir=infra output -raw mbr_api_url)
+          MODEL=$(terraform -chdir=infra output -raw model_deployment)
+          MINI=$(terraform -chdir=infra output -raw mini_model_deployment)
+          KV_URI=$(terraform -chdir=infra output -raw key_vault_uri)
+          echo "acr=$ACR"                        >> $GITHUB_OUTPUT
+          echo "resource_group=$RG"              >> $GITHUB_OUTPUT
+          echo "foundry_endpoint=$FOUNDRY"       >> $GITHUB_OUTPUT
+          echo "mcp_fqdn=$MCP"                   >> $GITHUB_OUTPUT
+          echo "mbr_api_url=$MBR_API"            >> $GITHUB_OUTPUT
+          echo "model_deployment=$MODEL"         >> $GITHUB_OUTPUT
+          echo "mini_model_deployment=$MINI"     >> $GITHUB_OUTPUT
+          echo "key_vault_uri=$KV_URI"           >> $GITHUB_OUTPUT
+
+  # ── Job 2: Containers ───────────────────────────────────────────────────────
+  containers:
+    name: Containers (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    needs: infra
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        run: az acr login --name $(echo "${{ needs.infra.outputs.acr }}" | cut -d. -f1)
+
+      - name: Build & push mbr-api
+        run: |
+          IMAGE=${{ needs.infra.outputs.acr }}/mbr-api
+          docker build -t $IMAGE:${{ github.sha }} apps/mbr-api
+          docker push  $IMAGE:${{ github.sha }}
+          docker tag   $IMAGE:${{ github.sha }} $IMAGE:latest
+          docker push  $IMAGE:latest
+
+      - name: Build & push mbr-tools-mcp
+        run: |
+          IMAGE=${{ needs.infra.outputs.acr }}/mbr-tools-mcp
+          docker build -t $IMAGE:${{ github.sha }} apps/mbr-tools-mcp
+          docker push  $IMAGE:${{ github.sha }}
+          docker tag   $IMAGE:${{ github.sha }} $IMAGE:latest
+          docker push  $IMAGE:latest
+
+      - name: Build & push mbr-ui
+        run: |
+          IMAGE=${{ needs.infra.outputs.acr }}/mbr-ui
+          docker build \
+            --build-arg VITE_API_BASE_URL=/api \
+            -t $IMAGE:${{ github.sha }} apps/mbr-ui
+          docker push $IMAGE:${{ github.sha }}
+          docker tag  $IMAGE:${{ github.sha }} $IMAGE:latest
+          docker push $IMAGE:latest
+
+      - name: Update Container App revisions
+        run: |
+          ACR=${{ needs.infra.outputs.acr }}
+          RG=${{ needs.infra.outputs.resource_group }}
+          SHA=${{ github.sha }}
+          az containerapp update --name ca-mbr-api      --resource-group $RG --image $ACR/mbr-api:$SHA       --output none
+          az containerapp update --name ca-mbr-tools-mcp --resource-group $RG --image $ACR/mbr-tools-mcp:$SHA --output none
+          az containerapp update --name ca-mbr-ui        --resource-group $RG --image $ACR/mbr-ui:$SHA        --output none
+
+  # ── Job 3: Fabric (optional) ────────────────────────────────────────────────
+  fabric:
+    name: Fabric setup (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    needs: infra
+    environment: ${{ github.event.inputs.environment }}
+    if: ${{ github.event.inputs.skip_fabric != 'true' && vars.FABRIC_SQL_SERVER != '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Fabric dependencies
+        run: pip install pyodbc azure-identity
+
+      - name: Create Lakehouse tables
+        run: python fabric/scripts/setup_lakehouse.py --sql-server ${{ vars.FABRIC_SQL_SERVER }}
+
+      - name: Seed data
+        run: python fabric/scripts/seed_data.py --sql-server ${{ vars.FABRIC_SQL_SERVER }}
+
+  # ── Job 4: Foundry agents ───────────────────────────────────────────────────
+  agents:
+    name: Foundry agents (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    needs: [infra, containers]
+    environment: ${{ github.event.inputs.environment }}
+    if: ${{ github.event.inputs.skip_agents != 'true' && needs.infra.outputs.foundry_endpoint != '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install agent SDK
+        run: pip install -r agents/requirements.txt
+
+      - name: Deploy Foundry agents
+        run: |
+          python agents/deploy.py \
+            --project-endpoint       ${{ needs.infra.outputs.foundry_endpoint }} \
+            --model-deployment       ${{ needs.infra.outputs.model_deployment }} \
+            --mini-model-deployment  ${{ needs.infra.outputs.mini_model_deployment }} \
+            --key-vault-uri          ${{ needs.infra.outputs.key_vault_uri }} \
+            --mcp-server-url         https://${{ needs.infra.outputs.mcp_fqdn }} \
+            --output                 agents/agent_ids.json
+
+      - name: Inject agent IDs into ca-mbr-api
+        run: |
+          CONV_ID=$(python -c "import json; d=json.load(open('agents/agent_ids.json')); print(d['longhaul-conversational-agent'])")
+          PRES_ID=$(python -c "import json; d=json.load(open('agents/agent_ids.json')); print(d['longhaul-mbr-presentation-agent'])")
+          az containerapp update \
+            --name ca-mbr-api \
+            --resource-group ${{ needs.infra.outputs.resource_group }} \
+            --set-env-vars "CONVERSATIONAL_AGENT_ID=$CONV_ID" "MBR_PRESENTATION_AGENT_ID=$PRES_ID" \
+            --output none
+
+  # ── Summary ─────────────────────────────────────────────────────────────────
+  summary:
+    name: Deployment summary
+    runs-on: ubuntu-latest
+    needs: [infra, containers, agents]
+    if: always()
+
+    steps:
+      - name: Write summary
+        run: |
+          echo "### LONGHAUL Deploy - ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | URL |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| UI | https://$(echo '${{ needs.infra.outputs.mbr_api_url }}' | sed 's|https://||') |" >> $GITHUB_STEP_SUMMARY
+          echo "| mbr-api | ${{ needs.infra.outputs.mbr_api_url }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Foundry | ${{ needs.infra.outputs.foundry_endpoint }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY

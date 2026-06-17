@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / React
+node_modules/
+dist/
+build/
+.parcel-cache/
+*.local
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+tfplan-*
+errored.tfstate
+crash.log
+crash.*.log
+terraform.tfvars
+
+# Env / secrets
+.env
+.env.*
+!sample.env
+*.pem
+*.key
+
+# Generated agent IDs (non-secret config emitted by agents/deploy.py)
+agents/agent_ids.json
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+.claude/settings.local.json
+.claude
+design/
+project.md

@@ -1,0 +1,5 @@
+azure-ai-projects==2.0.0b2
+azure-ai-agents
+azure-identity>=1.18.0
+azure-keyvault-secrets>=4.8.0
+python-dotenv>=1.0.0
