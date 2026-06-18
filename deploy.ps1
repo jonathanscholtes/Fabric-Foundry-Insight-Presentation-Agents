@@ -234,20 +234,21 @@ try {
 }
 Pop-Location
 
-$script:AcrLoginSrv        = if ($tfOutputs) { $tfOutputs.container_registry_login_server.value } else { $null }
-$script:RgName             = if ($tfOutputs) { $tfOutputs.resource_group_name.value }              else { $null }
-$script:FoundryEp          = if ($tfOutputs) { $tfOutputs.foundry_project_endpoint.value }         else { $null }
-$script:McpFqdn            = if ($tfOutputs) { $tfOutputs.mcp_tools_api_fqdn.value }               else { $null }
-$script:MbrApiUrl          = if ($tfOutputs) { $tfOutputs.mbr_api_url.value }                      else { $null }
-$script:UiUrl              = if ($tfOutputs) { $tfOutputs.longhaul_ui_url.value }                  else { $null }
-$script:AiAccountId        = if ($tfOutputs) { $tfOutputs.ai_account_id.value }                    else { $null }
-$script:KvName             = if ($tfOutputs) { $tfOutputs.key_vault_name.value }                   else { $null }
-$script:KvUri              = if ($tfOutputs) { $tfOutputs.key_vault_uri.value }                    else { $null }
-$script:StorageAcct        = if ($tfOutputs) { $tfOutputs.storage_account_name.value }             else { $null }
-$script:ModelDeployment    = if ($tfOutputs) { $tfOutputs.model_deployment.value }                 else { $null }
-$script:MiniModelDeployment = if ($tfOutputs) { $tfOutputs.mini_model_deployment.value }           else { $null }
-$script:LakehouseId         = ""
-$script:DataAgentUrl        = ""
+$script:AcrLoginSrv           = if ($tfOutputs) { $tfOutputs.container_registry_login_server.value } else { $null }
+$script:RgName                = if ($tfOutputs) { $tfOutputs.resource_group_name.value }              else { $null }
+$script:FoundryEp             = if ($tfOutputs) { $tfOutputs.foundry_project_endpoint.value }         else { $null }
+$script:McpFqdn               = if ($tfOutputs) { $tfOutputs.mcp_tools_api_fqdn.value }               else { $null }
+$script:MbrApiUrl             = if ($tfOutputs) { $tfOutputs.mbr_api_url.value }                      else { $null }
+$script:UiUrl                 = if ($tfOutputs) { $tfOutputs.longhaul_ui_url.value }                  else { $null }
+$script:AiAccountId           = if ($tfOutputs) { $tfOutputs.ai_account_id.value }                    else { $null }
+$script:KvName                = if ($tfOutputs) { $tfOutputs.key_vault_name.value }                   else { $null }
+$script:KvUri                 = if ($tfOutputs) { $tfOutputs.key_vault_uri.value }                    else { $null }
+$script:StorageAcct           = if ($tfOutputs) { $tfOutputs.storage_account_name.value }             else { $null }
+$script:ModelDeployment       = if ($tfOutputs) { $tfOutputs.model_deployment.value }                 else { $null }
+$script:MiniModelDeployment   = if ($tfOutputs) { $tfOutputs.mini_model_deployment.value }            else { $null }
+$script:AppIdentityPrincipalId = if ($tfOutputs) { $tfOutputs.app_identity_principal_id.value }       else { $null }
+$script:LakehouseId            = ""
+$script:DataAgentUrl           = ""
 
 if ($script:MbrApiUrl)   { Write-Host "  mbr-api URL     : $($script:MbrApiUrl)"   -ForegroundColor Gray }
 if ($script:UiUrl)       { Write-Host "  UI URL          : $($script:UiUrl)"       -ForegroundColor Gray }
@@ -370,9 +371,10 @@ if ($SkipFabric) {
 } else {
     try {
         $daResult = & "$scripts\Deploy-FabricDataAgent.ps1" `
-            -WorkspaceId $FabricWorkspaceId `
-            -LakehouseId $script:LakehouseId `
-            -KeyVaultUri ($script:KvUri -as [string])
+            -WorkspaceId             $FabricWorkspaceId `
+            -LakehouseId             $script:LakehouseId `
+            -KeyVaultUri             ($script:KvUri -as [string]) `
+            -AppIdentityPrincipalId  ($script:AppIdentityPrincipalId -as [string])
 
         $script:DataAgentUrl = if ($daResult -and $daResult.DataAgentUrl) { $daResult.DataAgentUrl } else { "" }
         Write-Host "[OK] Fabric Data Agent configured." -ForegroundColor Green
@@ -391,19 +393,18 @@ if (-not $script:FoundryEp) {
 } else {
     $mcpUrl = if ($script:McpFqdn) { "https://$($script:McpFqdn)" } else { $null }
 
-    $foundryArgs = @("-ProjectEndpoint", $script:FoundryEp)
-    if ($mcpUrl)                     { $foundryArgs += @("-McpServerUrl",         $mcpUrl) }
-    if ($script:ModelDeployment)     { $foundryArgs += @("-ModelDeployment",      $script:ModelDeployment) }
-    if ($script:MiniModelDeployment) { $foundryArgs += @("-MiniModelDeployment",  $script:MiniModelDeployment) }
-    if ($script:KvUri)               { $foundryArgs += @("-KeyVaultUri",          $script:KvUri) }
-    if ($script:DataAgentUrl)        { $foundryArgs += @("-FabricDataAgentUrl",   $script:DataAgentUrl) }
-
     if (-not $mcpUrl) {
         Write-Host "  WARNING: mcp_tools_api_fqdn not in TF outputs - presentation agent deployed without MCP tools." -ForegroundColor Yellow
         Write-Host "           Key Vault / Foundry connection fallback will be tried by deploy.py." -ForegroundColor Gray
     }
 
-    & "$scripts\Deploy-FoundryAgents.ps1" @foundryArgs
+    & "$scripts\Deploy-FoundryAgents.ps1" `
+        -ProjectEndpoint     $script:FoundryEp `
+        -McpServerUrl        ($mcpUrl -as [string]) `
+        -ModelDeployment     ($script:ModelDeployment -as [string]) `
+        -MiniModelDeployment ($script:MiniModelDeployment -as [string]) `
+        -KeyVaultUri         ($script:KvUri -as [string]) `
+        -FabricDataAgentUrl  ($script:DataAgentUrl -as [string])
 
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "Deploy-FoundryAgents.ps1 failed (exit $LASTEXITCODE) - continuing."

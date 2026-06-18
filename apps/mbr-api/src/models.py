@@ -100,6 +100,7 @@ class PresentationResponse(BaseModel):
     period: str
     region: str
     generated_at: str
+    deck_url: str = ""
     thumbnail_urls: list[str] = []
 
 

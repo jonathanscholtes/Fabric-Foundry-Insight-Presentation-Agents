@@ -2,23 +2,49 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
 
+function triggerDownload(url, filename) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 function DeckCard({ deck }) {
+  const [downloading, setDownloading] = useState(false);
+
+  async function handleDownload() {
+    setDownloading(true);
+    try {
+      const data = await api.get(`/presentations/${deck.deck_id}/download`);
+      if (data?.url) {
+        const filename = `MBR-${deck.region}-${(deck.period ?? '').replace(' ', '')}.pptx`;
+        triggerDownload(data.url, filename);
+      }
+    } catch (err) {
+      console.error('Download failed:', err);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   return (
     <div className="deck-card">
-      <div className="deck-card-thumb">
-        {deck.thumbnail_url
-          ? <img src={deck.thumbnail_url} alt={deck.title} loading="lazy" />
-          : <div className="deck-card-thumb-placeholder" />
-        }
-      </div>
       <div className="deck-card-meta">
-        <span className="deck-card-title">{deck.title ?? `${deck.region} — ${deck.period}`}</span>
-        <span className="deck-card-date">{deck.created_at ? new Date(deck.created_at).toLocaleDateString() : ''}</span>
+        <span className="deck-card-title">{deck.region} — {deck.period}</span>
+        <span className="deck-card-date">
+          {deck.generated_at ? new Date(deck.generated_at).toLocaleDateString() : ''}
+        </span>
       </div>
       <div className="deck-card-actions">
-        <a href={deck.deck_url} target="_blank" rel="noreferrer" className="btn btn--secondary btn--sm">
-          Download
-        </a>
+        <button
+          className="btn btn--secondary btn--sm"
+          onClick={handleDownload}
+          disabled={downloading}
+        >
+          {downloading ? 'Downloading…' : 'Download'}
+        </button>
       </div>
     </div>
   );
@@ -29,15 +55,14 @@ export default function MbrLibrary() {
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['mbr-library'],
-    queryFn: () => api.get('/presentations/library').then(r => r),
+    queryFn: () => api.get('/presentations'),
     staleTime: 2 * 60 * 1000,
   });
 
-  const decks = (data?.decks ?? []).filter(d => {
+  const decks = (data?.items ?? []).filter(d => {
     if (!search) return true;
     const q = search.toLowerCase();
-    return (d.title ?? '').toLowerCase().includes(q)
-      || (d.region ?? '').toLowerCase().includes(q)
+    return (d.region ?? '').toLowerCase().includes(q)
       || (d.period ?? '').toLowerCase().includes(q);
   });
 

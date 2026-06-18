@@ -11,6 +11,7 @@ from .config import settings
 from .routes.health import router as health_router
 from .routes.kpis import router as kpis_router
 from .routes.templates import router as templates_router
+from .routes.analytics import router as analytics_router
 from .routes.conversations import router as conversations_router
 from .routes.presentations import router as presentations_router
 from .routes.downloads import router as downloads_router
@@ -32,6 +33,7 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health_router)
 app.include_router(kpis_router)
+app.include_router(analytics_router)
 app.include_router(templates_router)
 app.include_router(conversations_router)
 app.include_router(presentations_router)

@@ -4,7 +4,7 @@ import { api } from '../api';
 export function useAnalytics(period, region) {
   return useQuery({
     queryKey: ['analytics', period, region],
-    queryFn: () => api.get('/analytics', { params: { period, region } }).then(r => r.data),
+    queryFn: () => api.get('/analytics', { params: { period, region } }),
     enabled: Boolean(period && region),
     staleTime: 5 * 60 * 1000,
   });

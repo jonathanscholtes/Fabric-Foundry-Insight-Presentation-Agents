@@ -131,6 +131,7 @@ async def generate_presentation(
         period=period_label,
         region=body.region,
         generated_at=generated_at,
+        deck_url=deck_url,
         thumbnail_urls=thumbnail_urls,
     )
 

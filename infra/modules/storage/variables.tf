@@ -4,3 +4,4 @@ variable "storage_account_name"          { type = string }
 variable "tags"                          { type = map(string) }
 variable "app_identity_principal_id"     { type = string }
 variable "deploy_identity_principal_id"  { type = string }
+variable "current_user_principal_id"     { type = string }

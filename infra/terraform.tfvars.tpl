@@ -40,7 +40,7 @@ container_app_env_name  = "cae-mbr-${Environment}-${ResourceToken}"
 # ---------------------------------------------------------------------------
 fabric_workspace_id = "${FabricWorkspaceId}"
 fabric_sql_server   = "${FabricSqlServer}"
-fabric_sql_database = "lh-mbr-trucking"
+fabric_sql_database = "lh_mbr_trucking"
 
 # ---------------------------------------------------------------------------
 # GitHub OIDC (populated by New-GitHubOidc.ps1 or -SetupGitHub flag)

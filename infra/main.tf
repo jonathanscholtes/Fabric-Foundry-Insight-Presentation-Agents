@@ -65,6 +65,7 @@ module "storage" {
   storage_account_name         = var.storage_account_name
   app_identity_principal_id    = module.identity.app_identity_principal_id
   deploy_identity_principal_id = module.identity.deploy_identity_principal_id
+  current_user_principal_id    = data.azurerm_client_config.current.object_id
   tags                         = local.tags
 }
 

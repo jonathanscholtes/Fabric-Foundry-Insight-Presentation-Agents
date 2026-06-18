@@ -18,10 +18,12 @@ router = APIRouter()
 _SLIDE_TITLES: dict[str, str] = {
     "01": "Title",
     "02": "Executive Summary",
-    "03": "Regional Performance",
-    "04": "Fleet Efficiency",
-    "05": "Driver Performance",
-    "06": "Bottom Line",
+    "03": "Revenue Performance",
+    "04": "Cost Management",
+    "05": "Operational Efficiency",
+    "06": "Sector Performance",
+    "07": "Key Drivers & Bottom Line",
+    "08": "Data Sources & Methodology",
 }
 
 

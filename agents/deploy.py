@@ -43,9 +43,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import (
-    FabricDataAgentTool,
+    FabricDataAgentToolParameters,
     MCPTool,
+    MicrosoftFabricAgentTool,
     PromptAgentDefinition,
+    ToolProjectConnection,
 )
 from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
@@ -203,14 +205,15 @@ class AgentDeployer:
     # Tool builders
     # ------------------------------------------------------------------
 
-    def _fabric_tool(self) -> Optional[FabricDataAgentTool]:
-        if self.fabric_data_agent_url:
-            logger.info("FabricDataAgentTool via URL: %s", self.fabric_data_agent_url)
-            return FabricDataAgentTool(
-                connection_name=self.fabric_connection_name,
+    def _fabric_tool(self) -> Optional[MicrosoftFabricAgentTool]:
+        logger.info("MicrosoftFabricAgentTool via connection name: %s", self.fabric_connection_name)
+        return MicrosoftFabricAgentTool(
+            fabric_dataagent_preview=FabricDataAgentToolParameters(
+                project_connections=[
+                    ToolProjectConnection(project_connection_id=self.fabric_connection_name)
+                ]
             )
-        logger.info("FabricDataAgentTool via connection name: %s", self.fabric_connection_name)
-        return FabricDataAgentTool(connection_name=self.fabric_connection_name)
+        )
 
     def _mcp_tool(self, module) -> MCPTool:
         """Build an MCPTool for an agent module.

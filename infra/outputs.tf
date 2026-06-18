@@ -33,6 +33,11 @@ output "app_identity_client_id" {
   value       = module.identity.app_identity_client_id
 }
 
+output "app_identity_principal_id" {
+  description = "Object/principal ID of the app managed identity (for Fabric workspace role assignment)"
+  value       = module.identity.app_identity_principal_id
+}
+
 output "key_vault_name" {
   description = "Name of the Key Vault"
   value       = module.key_vault.key_vault_name

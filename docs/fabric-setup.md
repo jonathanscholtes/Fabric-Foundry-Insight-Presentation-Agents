@@ -108,27 +108,91 @@ Driver Retention % =
 > `PREVIOUSMONTH(dim_month[period_label])`. The `period_label` column is text
 > and will cause a DAX error.
 
-## 5. Create the Data Agent
+## 5. Create and Configure the Data Agent
 
-1. In the workspace, click **New → Data agent** (preview)
-2. Name it: `da-mbr-trucking`
-3. Connect it to the semantic model `sm-mbr-trucking`
-4. In the Data Agent settings, note the **Connection name** —
-   this must match `FABRIC_DATA_AGENT_CONNECTION_NAME = "da-mbr-trucking"`
-   in `agents/deploy.py`
+### 5a. Create the agent (automated)
 
-The connection name is what Foundry uses to route queries to this Data Agent.
+Running `deploy.ps1 -FabricWorkspaceId <guid>` calls `Deploy-FabricDataAgent.ps1`,
+which creates `da_mbr_trucking` via the Fabric REST API.  The creation step
+(name + description) works reliably.  The `updateDefinition` step that follows
+attempts to set the data source and instructions via API but **may not apply** —
+the portal will show "No data added" if it fails.
+
+### 5b. Add the data source (manual — required)
+
+The Fabric portal is the only reliable way to wire up the Lakehouse:
+
+1. Go to [app.fabric.microsoft.com](https://app.fabric.microsoft.com) and open
+   the **longhaul-mbr** workspace
+2. Open **da_mbr_trucking**
+3. Click **Add data** → **Lakehouse**
+4. Select **lh_mbr_trucking** from the workspace
+5. Confirm — the Lakehouse should appear in the **Data** tab
+
+### 5c. Add agent instructions (manual — required)
+
+1. Click **Agent instructions** in the top toolbar
+2. Paste the following system prompt:
+
+```
+You are da_mbr_trucking, the data agent for LONGHAUL, a long-haul trucking company.
+You have access to 13 months of operational KPI data (May 2024 to May 2025) across
+5 regions (North, South, East, West, Central) and 20 vehicle types.
+
+Available tables:
+- dim_month: time dimension
+- dim_region: region dimension
+- dim_vehicle_type: vehicle type dimension
+- fact_monthly_kpis: monthly KPIs per region
+- fact_vehicle_kpis: monthly KPIs per region and vehicle type
+
+Always join fact tables with dimension tables to return human-readable labels.
+Express financial values in dollars. Express miles as whole numbers.
+When comparing periods, calculate percentage change and indicate direction.
+```
+
+### 5d. Publish
+
+Click **Publish** in the top toolbar. The agent is not active until published.
+
+### 5e. Fabric connection name
+
+After publishing, the connection name used by AI Foundry is `da_mbr_trucking`.
+This must match the value in `agents/deploy.py`:
+```python
+FABRIC_CONNECTION_NAME = "da_mbr_trucking"
+```
 
 ## 6. Managed Identity Access
 
-The app's managed identity (`longhaul-app-identity`) needs read access to the
-Fabric workspace:
+The app's managed identity (`longhaul-app-identity`) needs **Contributor** access
+to the Fabric workspace so it can query the Lakehouse SQL analytics endpoint.
 
-1. Go to the workspace **Settings → Access**
-2. Add the managed identity with **Viewer** role
+### Automated (recommended)
 
-For local development, ensure your user account has Viewer access and run
-`az login` to authenticate.
+`deploy.ps1` calls `Deploy-FabricDataAgent.ps1 -AppIdentityPrincipalId <id>`,
+which calls the Fabric REST API to add the managed identity as Contributor.
+
+**Prerequisite — Fabric Admin setting (one-time, cannot be scripted):**
+
+1. Go to [app.fabric.microsoft.com/admin](https://app.fabric.microsoft.com/admin)
+2. Navigate to **Tenant settings → Developer settings**
+3. Enable **"Allow service principals and managed identities to use Fabric APIs"**
+4. Save
+
+Without this setting, the automated RBAC call returns 403 and the deploy script
+prints a warning. Re-run the deploy after enabling it, or add the identity manually:
+
+### Manual fallback
+
+1. Go to the workspace **Settings → Manage access**
+2. Click **Add people or groups**
+3. Search for `longhaul-app-identity` (the user-assigned managed identity)
+4. Set role to **Contributor**
+5. Save
+
+For local development, ensure your user account has Contributor (or Viewer) access
+and run `az login` to authenticate.
 
 ## Troubleshooting
 

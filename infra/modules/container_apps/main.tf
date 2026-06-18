@@ -179,10 +179,6 @@ resource "azurerm_container_app" "longhaul_ui" {
       cpu    = 0.25
       memory = "0.5Gi"
 
-      env {
-        name  = "API_BASE_URL"
-        value = "http://ca-mbr-api"
-      }
     }
   }
 }

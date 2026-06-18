@@ -23,6 +23,11 @@
     Key Vault URI to store fabric-data-agent-id and fabric-data-agent-url secrets.
     Optional - skipped when not provided.
 
+.PARAMETER AppIdentityPrincipalId
+    Object (principal) ID of the app managed identity to add as Contributor in the
+    Fabric workspace.  This is the principal_id (object ID), not the client_id.
+    Optional - skipped when not provided.
+
 .OUTPUTS
     PSCustomObject with DataAgentId and DataAgentUrl.
 #>
@@ -30,8 +35,9 @@
 param(
     [Parameter(Mandatory=$true)]  [string]$WorkspaceId,
     [Parameter(Mandatory=$true)]  [string]$LakehouseId,
-    [string]$DataAgentName = "da_mbr_trucking",
-    [string]$KeyVaultUri   = ""
+    [string]$DataAgentName          = "da_mbr_trucking",
+    [string]$KeyVaultUri            = "",
+    [string]$AppIdentityPrincipalId = ""
 )
 
 Set-StrictMode -Version Latest
@@ -54,6 +60,55 @@ if (-not $token) {
 }
 
 $headers = @{ "Authorization" = "Bearer $token" }
+
+# ---------------------------------------------------------------------------
+# Grant app managed identity Contributor role on the Fabric workspace
+# ---------------------------------------------------------------------------
+if ($AppIdentityPrincipalId) {
+    Write-Title "Fabric Workspace RBAC  -  managed identity Contributor"
+    Write-Info "Adding principal '$AppIdentityPrincipalId' as Contributor on workspace '$WorkspaceId'..."
+
+    $rbacBody = @{
+        principal = @{ id = $AppIdentityPrincipalId; type = "ServicePrincipal" }
+        role      = "Contributor"
+    } | ConvertTo-Json -Depth 5 -Compress
+
+    try {
+        $null = Invoke-RestMethod `
+            -Uri         "$fabricBase/workspaces/$WorkspaceId/roleAssignments" `
+            -Headers     $headers `
+            -Method      Post `
+            -Body        ([System.Text.Encoding]::UTF8.GetBytes($rbacBody)) `
+            -ContentType "application/json" `
+            -ErrorAction Stop
+        Write-Success "Managed identity added as Fabric workspace Contributor."
+    } catch {
+        $statusCode  = $null
+        $errContent  = $null
+        if ($_.Exception.Response) {
+            $statusCode = [int]$_.Exception.Response.StatusCode
+            try {
+                $stream     = $_.Exception.Response.GetResponseStream()
+                $reader     = New-Object System.IO.StreamReader($stream)
+                $errContent = $reader.ReadToEnd()
+            } catch {}
+        }
+        # 400 with PrincipalAlreadyHasRole means idempotent - treat as success
+        if ($statusCode -eq 400 -and $errContent -match "PrincipalAlreadyHasRole") {
+            Write-Info "Managed identity is already a workspace Contributor - no change needed."
+        } elseif ($statusCode -eq 403) {
+            Write-Warn "RBAC assignment failed (403 Forbidden)."
+            Write-Warn "  Ensure 'Allow service principals and managed identities to use Fabric APIs'"
+            Write-Warn "  is enabled in the Fabric Admin portal (Tenant settings)."
+            Write-Warn "  Then re-run, or add the managed identity manually in the Fabric workspace."
+        } else {
+            Write-Warn "RBAC assignment failed (status=$statusCode): $errContent"
+            Write-Warn "  Add managed identity '$AppIdentityPrincipalId' as Contributor manually in the Fabric workspace."
+        }
+    }
+} else {
+    Write-Info "AppIdentityPrincipalId not provided - skipping workspace RBAC assignment."
+}
 
 # ---------------------------------------------------------------------------
 # Helper: poll Fabric LRO
@@ -95,57 +150,16 @@ if ($existing) {
     Write-Info "Data Agent '$DataAgentName' already exists (id: $dataAgentId)"
 } else {
     # -----------------------------------------------------------------------
-    # Build dataAgent.json definition
+    # Step 1: Create bare Data Agent (displayName + description only)
+    # Fabric rejects definition in the initial POST for Data Agents;
+    # definition (entities + instructions) is applied via updateDefinition.
     # -----------------------------------------------------------------------
-    $dataAgentJson = @{
-        entities = @(
-            @{
-                name        = "lh_mbr_trucking"
-                type        = "Lakehouse"
-                workspaceId = $WorkspaceId
-                artifactId  = $LakehouseId
-            }
-        )
-        instructionSets = @(
-            @{
-                role         = "Agent"
-                instructions = @"
-You are da_mbr_trucking, the data agent for LONGHAUL, a long-haul trucking company.
-You have access to 13 months of operational KPI data (May 2024 to May 2025) across
-5 regions (North, South, East, West, Central) and 20 vehicle types.
-
-Available tables:
-- dim_month: time dimension (month_id, period_date, period_label, year, month_num, month_name, sort_order)
-- dim_region: region dimension (region_id, region_name, region_code)
-- dim_vehicle_type: vehicle type dimension (vehicle_type_id, vehicle_type_name)
-- fact_monthly_kpis: monthly KPIs per region (revenue, miles, costs, deliveries, driver counts, incidents)
-- fact_vehicle_kpis: monthly KPIs per region and vehicle type (miles, fuel cost, delivery performance)
-
-Always join fact tables with dimension tables to return human-readable labels.
-Express financial values in dollars. Express miles as whole numbers.
-When comparing periods, calculate percentage change and indicate direction (up/down).
-"@
-            }
-        )
-    } | ConvertTo-Json -Depth 10 -Compress
-
-    $encodedDefinition = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($dataAgentJson))
+    Write-Info "Creating Data Agent '$DataAgentName'..."
 
     $createBody = @{
         displayName = $DataAgentName
         description = "LONGHAUL MBR trucking data agent - queries lh_mbr_trucking Lakehouse"
-        definition  = @{
-            parts = @(
-                @{
-                    path        = "dataAgent.json"
-                    payload     = $encodedDefinition
-                    payloadType = "InlineBase64"
-                }
-            )
-        }
-    } | ConvertTo-Json -Depth 10 -Compress
-
-    Write-Info "Creating Data Agent '$DataAgentName'..."
+    } | ConvertTo-Json -Depth 5 -Compress
 
     try {
         $createResp = Invoke-WebRequest `
@@ -188,6 +202,70 @@ When comparing periods, calculate percentage change and indicate direction (up/d
         Write-Success "Data Agent provisioned (id: $dataAgentId)"
     } else {
         throw "Unexpected status $($createResp.StatusCode) from Fabric create Data Agent."
+    }
+
+    # -----------------------------------------------------------------------
+    # Step 2: Apply definition (Lakehouse entity + system instructions)
+    # -----------------------------------------------------------------------
+    Write-Info "Applying Data Agent definition (entities + instructions)..."
+
+    $dataAgentJson = @{
+        entities = @(
+            @{
+                name        = "lh_mbr_trucking"
+                type        = "Lakehouse"
+                workspaceId = $WorkspaceId
+                artifactId  = $LakehouseId
+            }
+        )
+        instructionSets = @(
+            @{
+                role         = "Agent"
+                instructions = "You are da_mbr_trucking, the data agent for LONGHAUL, a long-haul trucking company. You have access to 13 months of operational KPI data (May 2024 to May 2025) across 5 regions (North, South, East, West, Central) and 20 vehicle types. Available tables: dim_month (time dimension), dim_region (region dimension), dim_vehicle_type (vehicle type dimension), fact_monthly_kpis (monthly KPIs per region), fact_vehicle_kpis (monthly KPIs per region and vehicle type). Always join fact tables with dimension tables to return human-readable labels. Express financial values in dollars. Express miles as whole numbers. When comparing periods, calculate percentage change and indicate direction."
+            }
+        )
+    } | ConvertTo-Json -Depth 10 -Compress
+
+    $encodedDefinition = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($dataAgentJson))
+
+    $updateBody = @{
+        definition = @{
+            parts = @(
+                @{
+                    path        = "dataAgent.json"
+                    payload     = $encodedDefinition
+                    payloadType = "InlineBase64"
+                }
+            )
+        }
+    } | ConvertTo-Json -Depth 10 -Compress
+
+    try {
+        $updateResp = Invoke-WebRequest `
+            -Uri             "$fabricBase/workspaces/$WorkspaceId/dataAgents/$dataAgentId/updateDefinition" `
+            -Headers         $headers `
+            -Method          Post `
+            -Body            ([System.Text.Encoding]::UTF8.GetBytes($updateBody)) `
+            -ContentType     "application/json" `
+            -UseBasicParsing `
+            -ErrorAction     Stop
+
+        if ($updateResp.StatusCode -in @(200, 201)) {
+            Write-Success "Data Agent definition applied."
+        } elseif ($updateResp.StatusCode -eq 202) {
+            $opUrl = $updateResp.Headers["Location"]
+            if (-not $opUrl) {
+                $opId  = $updateResp.Headers["x-ms-operation-id"]
+                $opUrl = "$fabricBase/operations/$opId"
+            }
+            Write-Info "Definition update async - polling..."
+            $null = Wait-FabricOperation -OperationUrl $opUrl
+            Write-Success "Data Agent definition update complete."
+        }
+    } catch {
+        Write-Warn "Could not apply definition via updateDefinition: $_"
+        Write-Info "Data Agent exists but Lakehouse entity + instructions must be configured in the Fabric portal."
+        Write-Info "  Fabric portal > Data Agents > $DataAgentName > Edit"
     }
 }
 

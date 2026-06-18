@@ -33,7 +33,7 @@ const SLIDE_TITLES = [
 ]
 
 export default function PresentationPanel({ period, region }) {
-  const { templateSlidesQuery, generateMutation } = useMbrGeneration(period, region)
+  const { templateSlidesQuery, generateMutation, downloadAgainMutation } = useMbrGeneration(period, region)
   const { isLoading: slidesLoading } = templateSlidesQuery
   const {
     mutate: generate,
@@ -41,6 +41,7 @@ export default function PresentationPanel({ period, region }) {
     data: genResult,
     isError: genError,
   } = generateMutation
+  const { mutate: downloadAgain, isPending: downloading } = downloadAgainMutation
 
   return (
     <div className="presentation-panel">
@@ -66,21 +67,16 @@ export default function PresentationPanel({ period, region }) {
         ))}
       </ul>
 
-      {/* Loading template */}
       {slidesLoading && (
         <div className="template-slides--loading">Loading template…</div>
       )}
 
-      {/* Status messages */}
       {genError && (
         <div className="presentation-error">Generation failed — please try again.</div>
       )}
-      {genResult?.deck_url && (
+      {genResult && !genError && (
         <div className="presentation-success">
-          <a href={genResult.deck_url} target="_blank" rel="noreferrer"
-            style={{ color: 'var(--green)', fontSize: 13, fontWeight: 600 }}>
-            Deck ready — click to download
-          </a>
+          Deck ready — download started automatically.
         </div>
       )}
 
@@ -100,10 +96,12 @@ export default function PresentationPanel({ period, region }) {
         <button
           className="btn btn-outline"
           style={{ width: '100%' }}
-          disabled={!genResult?.deck_url}
-          onClick={() => genResult?.deck_url && window.open(genResult.deck_url, '_blank')}
+          disabled={!genResult?.deck_id || downloading}
+          onClick={() => genResult?.deck_id && downloadAgain(genResult.deck_id)}
         >
-          <IconDownload /> Review Data Pack
+          {downloading
+            ? <><span className="spinner" /> Downloading…</>
+            : <><IconDownload /> Download Again</>}
         </button>
       </div>
     </div>

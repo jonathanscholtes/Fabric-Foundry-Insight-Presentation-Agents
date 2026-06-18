@@ -30,8 +30,10 @@ export default function App() {
           <Route path="/conversations" element={<Conversations />} />
           <Route path="/library" element={<MbrLibrary />} />
           <Route path="/presentations" element={<MbrLibrary />} />
-          <Route path="/settings" element={<SettingsPlaceholder />} />
-          <Route path="/reports" element={<SettingsPlaceholder />} />
+          <Route path="/settings"     element={<SettingsPlaceholder />} />
+          <Route path="/reports"      element={<SettingsPlaceholder />} />
+          <Route path="/alerts"       element={<SettingsPlaceholder />} />
+          <Route path="/help"         element={<SettingsPlaceholder />} />
         </Routes>
       </main>
     </div>

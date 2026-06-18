@@ -91,17 +91,31 @@ def _fmt_delta_pp(v: float) -> str:
     return f"{arrow} {abs(v):.1f}pp"
 
 
+# ── Text splitting ─────────────────────────────────────────────────────────────
+
+def _split_text(text: str, n: int) -> list[str]:
+    """Split a narrative block into n parts by bullet lines, then sentences."""
+    lines = [l.strip().lstrip("•-–*· ").strip() for l in text.splitlines() if l.strip()]
+    if len(lines) >= n:
+        return lines[:n]
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
+    if len(sentences) >= n:
+        return sentences[:n]
+    return (lines + [""] * n)[:n]
+
+
 # ── PowerPoint placeholder filling ────────────────────────────────────────────
 
 def _replace_in_shape(shape, replacements: dict[str, str]) -> None:
-    """Replace {{tag}} placeholders in all text runs of a shape."""
+    """Replace {tag} placeholders in all text runs of a shape."""
     if not shape.has_text_frame:
         return
     for para in shape.text_frame.paragraphs:
         for run in para.runs:
             for tag, value in replacements.items():
-                if f"{{{{{tag}}}}}" in run.text:
-                    run.text = run.text.replace(f"{{{{{tag}}}}}", value)
+                placeholder = f"{{{tag}}}"
+                if placeholder in run.text:
+                    run.text = run.text.replace(placeholder, value)
 
 
 def _fill_slide(slide, replacements: dict[str, str]) -> None:
@@ -109,31 +123,52 @@ def _fill_slide(slide, replacements: dict[str, str]) -> None:
         _replace_in_shape(shape, replacements)
 
 
-def _build_kpi_replacements(kpis: dict) -> dict[str, str]:
+def _build_kpi_tags(kpis: dict) -> dict[str, str]:
+    """Map trucking KPI dict to the template's {tag} names."""
     r = kpis
+    rev   = r["total_revenue"]
+    miles = r["total_miles"]
+    empty = r["empty_miles_pct"]
+    margin = r["operating_margin_pct"]
+    cpm   = r["cost_per_mile"]
+    otd   = r["on_time_delivery_pct"]
+
+    # load_factor is the inverse of empty miles pct
+    load_factor       = 100.0 - empty["value"]
+    load_factor_delta = -empty["delta_pp"]
+
     return {
-        "total_revenue":          _fmt_revenue(r["total_revenue"]["value"]),
-        "total_revenue_delta":    _fmt_delta_pct(r["total_revenue"]["delta_pct"]),
-        "total_miles":            _fmt_miles(r["total_miles"]["value"]),
-        "total_miles_delta":      _fmt_delta_pct(r["total_miles"]["delta_pct"]),
-        "empty_miles_pct":        _fmt_pct(r["empty_miles_pct"]["value"]),
-        "empty_miles_delta":      _fmt_delta_pp(r["empty_miles_pct"]["delta_pp"]),
-        "operating_margin_pct":   _fmt_pct(r["operating_margin_pct"]["value"]),
-        "operating_margin_delta": _fmt_delta_pp(r["operating_margin_pct"]["delta_pp"]),
-        "cost_per_mile":          _fmt_cpm(r["cost_per_mile"]["value"]),
-        "cost_per_mile_delta":    _fmt_delta_pct(r["cost_per_mile"]["delta_pct"]),
-        "on_time_delivery_pct":   _fmt_pct(r["on_time_delivery_pct"]["value"]),
-        "on_time_delivery_delta": _fmt_delta_pp(r["on_time_delivery_pct"]["delta_pp"]),
+        # Slide 2 — Executive Summary KPI boxes
+        "total_revenue":          _fmt_revenue(rev["value"]),
+        "revenue_delta":          _fmt_delta_pct(rev["delta_pct"]),
+        "total_users":            _fmt_miles(miles["value"]),          # slot re-used for Total Miles
+        "users_delta":            _fmt_delta_pct(miles["delta_pct"]),
+        "gross_margin":           _fmt_pct(empty["value"]),            # slot re-used for Empty Miles %
+        "gross_margin_delta":     _fmt_delta_pp(empty["delta_pp"]),
+        "operating_margin":       _fmt_pct(margin["value"]),
+        "operating_margin_delta": _fmt_delta_pp(margin["delta_pp"]),
+        "cost_per_hour":          _fmt_cpm(cpm["value"]),              # slot re-used for Cost Per Mile
+        "cost_per_hour_delta":    _fmt_delta_pct(cpm["delta_pct"]),
+        "on_time_delivery":       _fmt_pct(otd["value"]),
+        "on_time_delivery_delta": _fmt_delta_pp(otd["delta_pp"]),
+        # Slide 3 — Revenue Performance
+        "revenue_prior":          "",
+        # Slide 4 — Cost Management
+        "total_cost":             "",
+        "total_cost_delta":       "",
+        # Slide 5 — Operational Efficiency
+        "utilization_rate":       _fmt_pct(load_factor),
+        "utilization_rate_delta": _fmt_delta_pp(load_factor_delta),
+        "sla_compliance":         _fmt_pct(otd["value"]),
+        "sla_compliance_delta":   _fmt_delta_pp(otd["delta_pp"]),
+        "efficiency_score":       "",
     }
 
 
 # ── LibreOffice thumbnail generation ──────────────────────────────────────────
 
 def _generate_thumbnails(pptx_path: str, out_dir: str) -> list[str]:
-    """Convert pptx slides to PNG files using LibreOffice headless.
-
-    Returns sorted list of generated PNG paths.
-    """
+    """Convert pptx slides to PNG files using LibreOffice headless."""
     result = subprocess.run(
         [
             "libreoffice", "--headless",
@@ -170,19 +205,21 @@ def register_powerpoint_tools(mcp) -> None:
         prefix = f"templates/{template_name}/"
         container_client = client.get_container_client("thumbnails")
 
-        slides: list[dict] = []
         slide_titles = [
             "Title",
             "Executive Summary",
-            "Regional Performance",
-            "Fleet Efficiency",
-            "Driver Performance",
-            "Bottom Line",
+            "Revenue Performance",
+            "Cost Management",
+            "Operational Efficiency",
+            "Sector Performance",
+            "Key Drivers & Bottom Line",
+            "Data Sources & Methodology",
         ]
 
+        slides: list[dict] = []
         for blob in container_client.list_blobs(name_starts_with=prefix):
             blob_name = blob.name
-            filename = blob_name.split("/")[-1]  # e.g. "slide-01.png"
+            filename = blob_name.split("/")[-1]
             m = re.match(r"slide-(\d+)\.png", filename)
             if not m:
                 continue
@@ -203,12 +240,12 @@ def register_powerpoint_tools(mcp) -> None:
     ) -> dict:
         """Fill the MBR PowerPoint template with KPIs and narrative text blocks.
 
-        Downloads mbr_template.pptx, fills all {{tag}} placeholders, uploads the
+        Downloads mbr_template.pptx, fills all {tag} placeholders, uploads the
         completed deck, generates slide thumbnails with LibreOffice, and returns
         the deck ID, deck URL, and thumbnail URLs.
 
         Args:
-            region:     Region name, e.g. "Southwest".
+            region:     Region name, e.g. "North".
             period:     Period label, e.g. "May 2025".
             kpis:       Dict of KPI values and deltas from the Fabric Data Agent.
             narratives: Dict of text blocks: executive_summary, key_drivers,
@@ -219,25 +256,96 @@ def register_powerpoint_tools(mcp) -> None:
             {deck_id, deck_url, thumbnail_urls}
         """
         client = _get_blob_client()
-        deck_id = str(uuid.uuid4())[:8]
-        period_slug = period.replace(" ", "")
+        deck_id        = str(uuid.uuid4())[:8]
+        period_slug    = period.replace(" ", "")
         generated_date = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
-        kpi_tags = _build_kpi_replacements(kpis)
+        kpi_tags = _build_kpi_tags(kpis)
 
-        # Slide-level replacements
-        title_replacements = {
-            "region": region,
-            "period": period,
-            "generated_date": generated_date,
-        }
-        exec_replacements = {**kpi_tags, "executive_summary": narratives.get("executive_summary", "")}
-        regional_replacements = {"regional_performance_narrative": narratives.get("service_performance", "")}
-        fleet_replacements = {"fleet_efficiency_narrative": (
-            narratives.get("operational_efficiency", "") + "\n" + narratives.get("cost_management", "")
-        )}
-        driver_replacements = {"driver_performance_narrative": narratives.get("key_drivers", "")}
-        bottom_replacements = {"bottom_line_narrative": narratives.get("bottom_line", "")}
+        # Split narrative blocks for slides that have multiple placeholder slots
+        drivers      = _split_text(narratives.get("key_drivers", ""), 4)
+        rev_insights = _split_text(narratives.get("service_performance", ""), 2)
+        cost_insights = _split_text(narratives.get("cost_management", ""), 2)
+
+        # One replacements dict per slide (template has 8 slides)
+        slide_replacements = [
+            # Slide 1 — Title
+            {
+                "mbr_period":       period,
+                "prepared_by":      "LONGHAUL AI",
+                "data_source_count": "1",
+            },
+            # Slide 2 — Executive Summary
+            {
+                **kpi_tags,
+                "mbr_period":          period,
+                "executive_commentary": narratives.get("executive_summary", ""),
+            },
+            # Slide 3 — Revenue Performance
+            {
+                "mbr_period":       period,
+                "revenue_prior":    "",
+                "total_revenue":    kpi_tags["total_revenue"],
+                "revenue_delta":    kpi_tags["revenue_delta"],
+                "revenue_insight_1": rev_insights[0],
+                "revenue_insight_2": rev_insights[1],
+            },
+            # Slide 4 — Cost Management
+            {
+                "mbr_period":         period,
+                "cost_per_hour":      kpi_tags["cost_per_hour"],
+                "cost_per_hour_delta": kpi_tags["cost_per_hour_delta"],
+                "total_cost":         "",
+                "total_cost_delta":   "",
+                "cost_insight_1":     cost_insights[0],
+                "cost_insight_2":     cost_insights[1],
+            },
+            # Slide 5 — Operational Efficiency
+            {
+                "mbr_period":            period,
+                "on_time_delivery":      kpi_tags["on_time_delivery"],
+                "on_time_delivery_delta": kpi_tags["on_time_delivery_delta"],
+                "utilization_rate":      kpi_tags["utilization_rate"],
+                "utilization_rate_delta": kpi_tags["utilization_rate_delta"],
+                "sla_compliance":        kpi_tags["sla_compliance"],
+                "sla_compliance_delta":  kpi_tags["sla_compliance_delta"],
+                "efficiency_score":      "",
+                "efficiency_analysis":   narratives.get("operational_efficiency", ""),
+            },
+            # Slide 6 — Sector Performance (mapped to regional data)
+            {
+                "mbr_period":        period,
+                "top_sector_name":   region,
+                "top_sector_growth": kpi_tags["revenue_delta"],
+                "s1_name":    region,               "s1_revenue": kpi_tags["total_revenue"],
+                "s1_growth":  kpi_tags["revenue_delta"], "s1_margin": kpi_tags["operating_margin"],
+                "s2_name": "", "s2_revenue": "", "s2_growth": "", "s2_margin": "",
+                "s3_name": "", "s3_revenue": "", "s3_growth": "", "s3_margin": "",
+                "s4_name": "", "s4_revenue": "", "s4_growth": "", "s4_margin": "",
+            },
+            # Slide 7 — Key Drivers & Bottom Line
+            {
+                "mbr_period":         period,
+                "driver_1":           drivers[0],
+                "driver_2":           drivers[1],
+                "driver_3":           drivers[2],
+                "driver_4":           drivers[3],
+                "bottom_line_summary": narratives.get("bottom_line", ""),
+                "call_to_action":     "",
+            },
+            # Slide 8 — Data Sources & Methodology
+            {
+                "mbr_period":        period,
+                "data_source_1":     "Fabric Lakehouse — lh_mbr_trucking",
+                "data_source_2":     "Azure AI Foundry Agent",
+                "data_source_3":     "LONGHAUL MBR Platform",
+                "data_source_4":     "",
+                "data_start_date":   period,
+                "data_end_date":     period,
+                "report_date":       generated_date,
+                "methodology_note":  "KPIs aggregated from the LONGHAUL Fabric Lakehouse via Azure AI Foundry.",
+            },
+        ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Download template
@@ -246,16 +354,8 @@ def register_powerpoint_tools(mcp) -> None:
             with open(template_path, "wb") as f:
                 f.write(template_bytes)
 
-            # Fill template
+            # Fill template slide by slide
             prs = Presentation(template_path)
-            slide_replacements = [
-                title_replacements,
-                exec_replacements,
-                regional_replacements,
-                fleet_replacements,
-                driver_replacements,
-                bottom_replacements,
-            ]
             for idx, slide in enumerate(prs.slides):
                 if idx < len(slide_replacements):
                     _fill_slide(slide, slide_replacements[idx])
@@ -290,7 +390,7 @@ def register_powerpoint_tools(mcp) -> None:
 
             deck_url = _sas_url(client, "decks", deck_blob_path)
 
-            # Save deck metadata blob
+            # Save deck metadata
             metadata = {
                 "deck_id":        deck_id,
                 "period":         period,

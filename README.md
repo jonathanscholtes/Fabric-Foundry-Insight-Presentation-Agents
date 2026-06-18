@@ -69,9 +69,10 @@ Set the printed values as GitHub repository variables:
 ### 2. Fabric Setup (manual)
 
 Follow [docs/fabric-setup.md](docs/fabric-setup.md) to:
-- Create the Lakehouse `lh-mbr-trucking`
-- Create the Semantic Model `sm-mbr-trucking`
-- Create the Data Agent `da-mbr-trucking`
+- Create the Lakehouse `lh_mbr_trucking`
+- Create the Semantic Model `sm_mbr_trucking`
+- Enable the Fabric Admin tenant setting for service principals
+- After deploy, open `da_mbr_trucking` in the portal → add `lh_mbr_trucking` as a data source → paste agent instructions → Publish (see [§5b–5d](docs/fabric-setup.md#5b-add-the-data-source-manual--required))
 
 ### 3. Full Deploy
 

@@ -65,8 +65,9 @@ $ErrorActionPreference = "Stop"
 
 Import-Module "$PSScriptRoot\common\DeploymentFunctions.psm1" -Force
 
-$root     = Resolve-Path "$PSScriptRoot\.."
-$infraDir = Join-Path $root "infra"
+$root        = Resolve-Path "$PSScriptRoot\.."
+$infraDir    = Join-Path $root "infra"
+$script:RgName = ''
 
 # ---------------------------------------------------------------------------
 # Resolve endpoint, MCP URL, and Key Vault URI from Terraform outputs when not supplied
@@ -129,7 +130,7 @@ if ($LASTEXITCODE -ne 0) { throw "pip install failed (exit $LASTEXITCODE)" }
 # ---------------------------------------------------------------------------
 Write-Title "Deploying agents"
 
-$agentIdsFile = Join-Path $root "agents" "agent_ids.json"
+$agentIdsFile = Join-Path $root "agents\agent_ids.json"
 
 $agentArgs = @(
     "$root\agents\deploy.py",
