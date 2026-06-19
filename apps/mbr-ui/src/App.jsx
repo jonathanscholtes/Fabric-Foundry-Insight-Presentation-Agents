@@ -3,14 +3,15 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import Sidebar from './components/layout/Sidebar.jsx'
 import TopBar from './components/layout/TopBar.jsx'
 import Dashboard from './pages/Dashboard.jsx'
-import Conversations from './pages/Conversations.jsx'
 import MbrLibrary from './pages/MbrLibrary.jsx'
 
-function SettingsPlaceholder() {
+function ComingSoon({ title }) {
   return (
     <div className="page-container">
-      <h2>Settings</h2>
-      <p className="muted">Settings configuration coming soon.</p>
+      <header className="page-header">
+        <h1>{title}</h1>
+      </header>
+      <div className="empty-state">Coming soon.</div>
     </div>
   )
 }
@@ -27,13 +28,11 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard period={period} region={region} />} />
-          <Route path="/conversations" element={<Conversations />} />
-          <Route path="/library" element={<MbrLibrary />} />
           <Route path="/presentations" element={<MbrLibrary />} />
-          <Route path="/settings"     element={<SettingsPlaceholder />} />
-          <Route path="/reports"      element={<SettingsPlaceholder />} />
-          <Route path="/alerts"       element={<SettingsPlaceholder />} />
-          <Route path="/help"         element={<SettingsPlaceholder />} />
+          <Route path="/settings"     element={<ComingSoon title="Settings" />} />
+          <Route path="/reports"      element={<ComingSoon title="Data & Reports" />} />
+          <Route path="/alerts"       element={<ComingSoon title="Alerts" />} />
+          <Route path="/help"         element={<ComingSoon title="Help" />} />
         </Routes>
       </main>
     </div>

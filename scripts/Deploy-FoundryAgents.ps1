@@ -56,7 +56,7 @@ param(
     [string] $MiniModelDeployment  = "gpt-4.1-mini",
     [string] $McpConnectionName    = "mbr-tools-mcp",
     [string] $FabricDataAgentUrl   = $env:FABRIC_DATA_AGENT_URL,
-    [string] $FabricConnectionName = "da-mbr-trucking",
+    [string] $FabricConnectionName = "fabric_dataagent_e6ffd2",
     [string] $KeyVaultUri          = $env:KEY_VAULT_URI
 )
 

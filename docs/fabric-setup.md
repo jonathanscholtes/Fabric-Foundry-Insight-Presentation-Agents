@@ -128,6 +128,34 @@ The Fabric portal is the only reliable way to wire up the Lakehouse:
 3. Click **Add data** → **Lakehouse**
 4. Select **lh_mbr_trucking** from the workspace
 5. Confirm — the Lakehouse should appear in the **Data** tab
+6. Open the `lh_mbr_trucking` data source and fill in the two fields below
+
+**Data source description:**
+```
+Contains 13 months of monthly operational KPI data (May 2024 – May 2025) for LONGHAUL's
+long-haul trucking fleet. Use this source to answer questions about revenue, mileage, costs,
+on-time delivery, and fleet efficiency across 5 US regions and 4 vehicle types.
+```
+
+**Data source instructions:**
+```
+## Join logic
+Always join fact tables to dimension tables:
+- JOIN dim_month ON month_id
+- JOIN dim_region ON region_id
+- JOIN dim_vehicle_type ON vehicle_type_id (fact_vehicle_kpis only)
+
+## Value formats
+- period_label: 'May 2025' (full month name, space, 4-digit year)
+- region_name: 'North', 'South', 'East', 'West', 'Central'
+- For all-region queries, omit the region filter
+
+## Query guidelines
+- Use SUM() for all fact columns
+- Always GROUP BY when aggregating across multiple dimensions
+- For MoM comparisons, prior month = sort_order - 1
+- Express financial values in dollars. Express miles as whole numbers.
+```
 
 ### 5c. Add agent instructions (manual — required)
 
@@ -137,25 +165,137 @@ The Fabric portal is the only reliable way to wire up the Lakehouse:
 ```
 You are da_mbr_trucking, the data agent for LONGHAUL, a long-haul trucking company.
 You have access to 13 months of operational KPI data (May 2024 to May 2025) across
-5 regions (North, South, East, West, Central) and 20 vehicle types.
+5 regions (North, South, East, West, Central) and 4 vehicle types
+(Flatbed, Refrigerated, Dry Van, Tanker).
 
-Available tables:
-- dim_month: time dimension
-- dim_region: region dimension
-- dim_vehicle_type: vehicle type dimension
-- fact_monthly_kpis: monthly KPIs per region
-- fact_vehicle_kpis: monthly KPIs per region and vehicle type
+## Data sources
+Use fact_monthly_kpis and fact_vehicle_kpis as the primary fact tables.
+Always join to dimension tables to return human-readable labels:
+- JOIN dim_month ON month_id
+- JOIN dim_region ON region_id
+- JOIN dim_vehicle_type ON vehicle_type_id (fact_vehicle_kpis only)
 
-Always join fact tables with dimension tables to return human-readable labels.
-Express financial values in dollars. Express miles as whole numbers.
-When comparing periods, calculate percentage change and indicate direction.
+## Value formats
+- period_label format: 3-letter month abbreviation + space + 4-digit year — e.g. 'Mar 2025', 'Feb 2025', 'Nov 2024'. Never use the full month name ('March 2025' returns no data).
+- region_name values: 'North', 'South', 'East', 'West', 'Central'
+- For all-region queries, omit the region filter
+
+## Query guidelines
+- Use SUM() for all fact columns
+- Always GROUP BY when aggregating across multiple dimensions
+- For MoM comparisons, use sort_order: prior month is sort_order - 1
+- Express financial values in dollars. Express miles as whole numbers.
+- Filter for the most recent record when no explicit period is given.
 ```
 
-### 5d. Publish
+### 5d. Add example queries (manual — required for performance)
+
+Example queries feed the vector similarity search that runs on every user question. Without them the agent cold-generates SQL every time, adding 10–20 seconds of latency. Add at least the six queries below under **Example queries** in the data source configuration.
+
+**Total revenue for a period (all regions)**
+```sql
+SELECT SUM(f.total_revenue) AS total_revenue
+FROM fact_monthly_kpis f
+JOIN dim_month m ON f.month_id = m.month_id
+WHERE m.period_label = 'Mar 2025'
+```
+
+**All KPIs for a period and region**
+```sql
+SELECT
+    SUM(f.total_revenue)      AS total_revenue,
+    SUM(f.total_miles)        AS total_miles,
+    SUM(f.empty_miles)        AS empty_miles,
+    SUM(f.total_cost)         AS total_cost,
+    SUM(f.fuel_cost)          AS fuel_cost,
+    SUM(f.driver_cost)        AS driver_cost,
+    SUM(f.maintenance_cost)   AS maintenance_cost,
+    SUM(f.on_time_deliveries) AS on_time_deliveries,
+    SUM(f.total_deliveries)   AS total_deliveries
+FROM fact_monthly_kpis f
+JOIN dim_month  m ON f.month_id  = m.month_id
+JOIN dim_region r ON f.region_id = r.region_id
+WHERE m.period_label = 'Mar 2025'
+  AND r.region_name = 'North'
+```
+
+**Trailing 6 months revenue trend for a region**
+```sql
+SELECT m.period_label, m.sort_order, SUM(f.total_revenue) AS revenue
+FROM fact_monthly_kpis f
+JOIN dim_month  m ON f.month_id  = m.month_id
+JOIN dim_region r ON f.region_id = r.region_id
+WHERE m.sort_order BETWEEN 7 AND 12
+  AND r.region_name = 'North'
+GROUP BY m.period_label, m.sort_order
+ORDER BY m.sort_order ASC
+```
+
+**MoM KPI comparison (current and prior period)**
+```sql
+SELECT m.period_label, m.sort_order,
+    SUM(f.total_revenue)    AS total_revenue,
+    SUM(f.total_miles)      AS total_miles,
+    SUM(f.total_cost)       AS total_cost,
+    SUM(f.fuel_cost)        AS fuel_cost,
+    SUM(f.driver_cost)      AS driver_cost
+FROM fact_monthly_kpis f
+JOIN dim_month  m ON f.month_id  = m.month_id
+JOIN dim_region r ON f.region_id = r.region_id
+WHERE m.sort_order IN (12, 13)
+  AND r.region_name = 'North'
+GROUP BY m.period_label, m.sort_order
+ORDER BY m.sort_order ASC
+```
+
+**On-time delivery % by vehicle type for a period and region**
+```sql
+SELECT
+    vt.vehicle_type_name,
+    SUM(fv.on_time_deliveries) * 1.0 / SUM(fv.total_deliveries) * 100 AS on_time_pct
+FROM fact_vehicle_kpis fv
+JOIN dim_month        m  ON fv.month_id        = m.month_id
+JOIN dim_region       r  ON fv.region_id       = r.region_id
+JOIN dim_vehicle_type vt ON fv.vehicle_type_id = vt.vehicle_type_id
+WHERE m.period_label = 'Mar 2025'
+  AND r.region_name = 'North'
+  AND fv.total_deliveries > 0
+GROUP BY vt.vehicle_type_name
+ORDER BY on_time_pct DESC
+```
+
+**Cost per mile and cost breakdown for a period and region**
+```sql
+SELECT
+    SUM(f.total_cost) * 1.0 / SUM(f.total_miles) AS cost_per_mile,
+    SUM(f.fuel_cost)        AS fuel_cost,
+    SUM(f.driver_cost)      AS driver_cost,
+    SUM(f.maintenance_cost) AS maintenance_cost
+FROM fact_monthly_kpis f
+JOIN dim_month  m ON f.month_id  = m.month_id
+JOIN dim_region r ON f.region_id = r.region_id
+WHERE m.period_label = 'Mar 2025'
+  AND r.region_name = 'North'
+```
+
+**Driver metrics for a period and region**
+```sql
+SELECT
+    SUM(f.driver_count)     AS driver_count,
+    SUM(f.drivers_departed) AS drivers_departed,
+    SUM(f.incidents)        AS incidents
+FROM fact_monthly_kpis f
+JOIN dim_month  m ON f.month_id  = m.month_id
+JOIN dim_region r ON f.region_id = r.region_id
+WHERE m.period_label = 'Mar 2025'
+  AND r.region_name = 'North'
+```
+
+### 5e. Publish
 
 Click **Publish** in the top toolbar. The agent is not active until published.
 
-### 5e. Fabric connection name
+### 5f. Fabric connection name
 
 After publishing, the connection name used by Microsoft Foundry is `da_mbr_trucking`.
 This must match the value in `agents/deploy.py`:

@@ -34,7 +34,7 @@ function DeckCard({ deck }) {
       <div className="deck-card-meta">
         <span className="deck-card-title">{deck.region} — {deck.period}</span>
         <span className="deck-card-date">
-          {deck.generated_at ? new Date(deck.generated_at).toLocaleDateString() : ''}
+          {deck.generated_at ? new Date(deck.generated_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : ''}
         </span>
       </div>
       <div className="deck-card-actions">
@@ -69,7 +69,7 @@ export default function MbrLibrary() {
   return (
     <div className="page-container">
       <header className="page-header">
-        <h1>MBR Library</h1>
+        <h1>Presentations</h1>
         <input
           type="search"
           placeholder="Search decks…"

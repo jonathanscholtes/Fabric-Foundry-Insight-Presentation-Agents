@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 
 function Icon({ d, size = 15 }) {
   return (
@@ -19,16 +19,6 @@ const MAIN_NAV = [
     label: 'Overview',
     to: '/dashboard',
     icon: ['M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z', 'M9 22V12h6v10'],
-  },
-  {
-    label: 'Conversations',
-    to: '/conversations',
-    icon: ['M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z'],
-  },
-  {
-    label: 'MBR Library',
-    to: '/library',
-    icon: ['M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z'],
   },
   {
     label: 'Presentations',
@@ -72,25 +62,12 @@ const FLEET_NAV = [
 ]
 
 export default function Sidebar() {
-  const navigate = useNavigate()
-
-  function handleNewMbr() {
-    navigate('/dashboard')
-    window.dispatchEvent(new CustomEvent('longhaul:reset'))
-  }
-
   return (
     <aside className="sidebar">
       {/* Brand */}
       <div className="sidebar-logo">
         <img src="/trucking_logo.png" alt="LONGHAUL INSIGHTS" />
       </div>
-
-      {/* New MBR */}
-      <button className="sidebar-new-mbr-btn" onClick={handleNewMbr}>
-        <Icon d={['M12 5v14', 'M5 12h14']} size={14} />
-        + New MBR
-      </button>
 
       {/* Main nav + Fleet Context */}
       <nav className="sidebar-nav-wrap">

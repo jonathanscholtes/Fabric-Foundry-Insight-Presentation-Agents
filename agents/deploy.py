@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 AGENT_MODULES = [conversational_agent, mbr_presentation_agent]
 
-DEFAULT_FABRIC_CONNECTION_NAME    = "da-mbr-trucking"
+DEFAULT_FABRIC_CONNECTION_NAME    = "fabric_dataagent_e6ffd2"
 DEFAULT_MCP_CONNECTION_NAME       = "mbr-tools-mcp"
 DEFAULT_MODEL_DEPLOYMENT          = "gpt-4.1"
 DEFAULT_MINI_MODEL_DEPLOYMENT     = "gpt-4.1-mini"
