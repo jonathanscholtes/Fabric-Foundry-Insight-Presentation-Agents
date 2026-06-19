@@ -77,7 +77,7 @@ jobs:
             -backend-config="resource_group_name=${{ env.TF_STATE_RG }}" \
             -backend-config="storage_account_name=${{ env.TF_STATE_STORAGE }}" \
             -backend-config="container_name=tfstate" \
-            -backend-config="key=dev.tfstate"
+            -backend-config="key=mbr-trucking.tfstate"
 
       - name: Terraform apply
         run: |
@@ -134,7 +134,7 @@ jobs:
             -backend-config="resource_group_name=${{ env.TF_STATE_RG }}" \
             -backend-config="storage_account_name=${{ env.TF_STATE_STORAGE }}" \
             -backend-config="container_name=tfstate" \
-            -backend-config="key=dev.tfstate"
+            -backend-config="key=mbr-trucking.tfstate"
 
       - name: Read Terraform outputs
         id: tfout
