@@ -23,7 +23,6 @@ jobs:
       presentation_tools_mcp: ${{ steps.filter.outputs.presentation_tools_mcp }}
       insights_ui:        ${{ steps.filter.outputs.insights_ui }}
       agents:        ${{ steps.filter.outputs.agents }}
-      infra:         ${{ steps.filter.outputs.infra }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -38,62 +37,18 @@ jobs:
               - 'apps/insights-ui/**'
             agents:
               - 'agents/**'
-            infra:
-              - 'infra/**'
 
-  # ── Infrastructure (only when infra files change) ─────────────────────────
-  infra:
-    name: Terraform apply
-    runs-on: ubuntu-latest
-    needs: changes
-    if: needs.changes.outputs.infra == 'true'
-    env:
-      ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      ARM_USE_OIDC:        "true"
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: azure/login@v2
-        with:
-          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.9"
-
-      - name: Derive TF state storage name
-        run: |
-          SUB_ID=$(az account show --query id -o tsv)
-          SUFFIX=${SUB_ID//-/}
-          echo "TF_STATE_STORAGE=stotfins${SUFFIX:0:8}" >> $GITHUB_ENV
-
-      - name: Terraform init
-        run: |
-          terraform -chdir=infra init \
-            -backend-config="resource_group_name=${{ env.TF_STATE_RG }}" \
-            -backend-config="storage_account_name=${{ env.TF_STATE_STORAGE }}" \
-            -backend-config="container_name=tfstate" \
-            -backend-config="key=insights.tfstate"
-
-      - name: Terraform apply
-        run: |
-          terraform -chdir=infra apply -auto-approve \
-            -var="environment=dev" \
-            -var="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            -var="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
-            -var="fabric_sql_server=${{ vars.FABRIC_SQL_SERVER }}" \
-            -var="fabric_sql_database=${{ vars.FABRIC_SQL_DATABASE }}"
-
-  # ── Read Terraform outputs (always runs, after optional apply) ────────────
+  # ── Read Terraform outputs (read-only — infra is provisioned locally via deploy.ps1) ──
+  # NOTE: This pipeline deliberately does NOT run `terraform apply`. Infrastructure is
+  # provisioned once from a workstation with deploy.ps1, which generates the gitignored
+  # infra/terraform.tfvars (holding the sticky resource_token and suffixed resource names).
+  # CI has no access to that file, so an apply here would fall back to the unsuffixed
+  # variable defaults and plan to destroy/recreate every resource. CI only reads outputs
+  # and deploys code (container images + Foundry agents).
   read-infra:
     name: Read infra outputs
     runs-on: ubuntu-latest
-    needs: [changes, infra]
-    if: always() && !cancelled() && (needs.infra.result == 'success' || needs.infra.result == 'skipped')
+    needs: changes
     env:
       ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
@@ -286,85 +241,10 @@ jobs:
             --set-env-vars "CONVERSATIONAL_AGENT_NAME=$CONV_NAME" "PRESENTATION_AGENT_NAME=$PRES_NAME" \
             --output none
 
-  # ── Wire Fabric Data Agent connection ─────────────────────────────────────
-  # Terraform creates the fabric_dataagent connection with placeholder credentials
-  # (WorkspaceId/ArtifactId = "-") and ignore_changes=[body], so a freshly created or
-  # replaced connection has no real target until the Data Agent GUID is set out of band.
-  # This job re-asserts the real values after an infra apply — the CI equivalent of
-  # deploy.ps1 Phase 3b. It runs ONLY when the infra job actually applied (so it does not
-  # churn on app-only pushes) and no-ops when the Data Agent or workspace id is absent.
-  # Note: ARM masks connection credential values on GET, so we cannot gate on the current
-  # value — the PUT is idempotent instead. Failures are non-fatal (warn + continue),
-  # matching the local script's behaviour.
-  fabric-connection:
-    name: Wire Fabric Data Agent connection
-    runs-on: ubuntu-latest
-    needs: [changes, infra, read-infra]
-    if: always() && !cancelled() && needs.infra.result == 'success' && needs.read-infra.result == 'success'
-    steps:
-      - uses: azure/login@v2
-        with:
-          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Re-assert fabric_dataagent connection credentials
-        shell: pwsh
-        env:
-          WORKSPACE_ID:    ${{ vars.FABRIC_WORKSPACE_ID }}
-          AI_PROJECT_ID:   ${{ needs.read-infra.outputs.ai_project_id }}
-          DATA_AGENT_NAME: da_trucking_ops
-        run: |
-          try {
-            if (-not $env:WORKSPACE_ID) {
-              Write-Host "::warning::FABRIC_WORKSPACE_ID repo variable not set — skipping Fabric connection wiring."
-              exit 0
-            }
-
-            # Discover the Data Agent GUID (ArtifactId) from the Fabric workspace.
-            $fabricToken = az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv
-            if (-not $fabricToken) { throw "Could not acquire Fabric API token." }
-
-            $headers = @{ Authorization = "Bearer $fabricToken" }
-            $listUrl = "https://api.fabric.microsoft.com/v1/workspaces/$($env:WORKSPACE_ID)/dataAgents"
-            $agents  = Invoke-RestMethod -Uri $listUrl -Headers $headers -Method Get
-            $agent   = $agents.value | Where-Object { $_.displayName -eq $env:DATA_AGENT_NAME } | Select-Object -First 1
-
-            if (-not $agent) {
-              Write-Host "::warning::Data Agent '$($env:DATA_AGENT_NAME)' not found in workspace $($env:WORKSPACE_ID). Run deploy.ps1 Phase 3 to create it. Skipping."
-              exit 0
-            }
-            $artifactId = $agent.id
-            Write-Host "Discovered Data Agent '$($env:DATA_AGENT_NAME)' (id: $artifactId)"
-
-            # Idempotently PUT the real WorkspaceId + ArtifactId onto the connection.
-            # Mirrors the body in scripts/Deploy-FabricDataAgent.ps1.
-            $body = @{
-              properties = @{
-                category                    = "CustomKeys"
-                authType                    = "CustomKeys"
-                target                      = "-"
-                isSharedToAll               = $false
-                useWorkspaceManagedIdentity = $false
-                peRequirement               = "NotRequired"
-                peStatus                    = "NotApplicable"
-                credentials                 = @{ keys = @{ WorkspaceId = $env:WORKSPACE_ID; ArtifactId = $artifactId } }
-                metadata                    = @{ type = "fabric_dataagent_preview" }
-              }
-            } | ConvertTo-Json -Depth 8 -Compress
-
-            $connUrl = "https://management.azure.com$($env:AI_PROJECT_ID)/connections/fabric_dataagent?api-version=2025-09-01"
-            $tmp = [System.IO.Path]::GetTempFileName()
-            $body | Out-File -FilePath $tmp -Encoding utf8
-            az rest --method put --url $connUrl --headers "Content-Type=application/json" --body "@$tmp" --output none
-            $putExit = $LASTEXITCODE
-            Remove-Item $tmp -Force
-            if ($putExit -ne 0) { throw "az rest PUT failed (exit $putExit)." }
-            Write-Host "fabric_dataagent connection updated (WorkspaceId=$($env:WORKSPACE_ID), ArtifactId=$artifactId)."
-          } catch {
-            Write-Host "::warning::Fabric connection wiring failed (non-fatal): $_"
-            exit 0
-          }
+  # NOTE: Wiring the fabric_dataagent connection credentials (the CI equivalent of the
+  # old "fabric-connection" job) is handled locally by deploy.ps1 Phase 3b. It only needs
+  # to run after a Terraform apply, which no longer happens in CI, so it lives with the
+  # workstation deploy flow rather than here.
 
   # ── Smoke test ────────────────────────────────────────────────────────────
   smoke-test:
@@ -382,7 +262,7 @@ jobs:
   summary:
     name: Deployment summary
     runs-on: ubuntu-latest
-    needs: [read-infra, build-insights-api, build-presentation-tools, build-insights-ui, agents, fabric-connection, smoke-test]
+    needs: [read-infra, build-insights-api, build-presentation-tools, build-insights-ui, agents, smoke-test]
     if: always()
     steps:
       - name: Write summary
@@ -400,5 +280,4 @@ jobs:
           echo "| presentation-tools | ${{ needs.build-presentation-tools.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| insights-ui        | ${{ needs.build-insights-ui.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| agents        | ${{ needs.agents.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| fabric-connection | ${{ needs.fabric-connection.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| smoke-test    | ${{ needs.smoke-test.result }} |" >> $GITHUB_STEP_SUMMARY

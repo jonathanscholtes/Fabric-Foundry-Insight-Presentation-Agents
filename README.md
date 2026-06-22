@@ -22,7 +22,7 @@ This project demonstrates how to connect **Microsoft Fabric structured data** to
 
 ---
 
-![LONGHAUL dashboard — KPI summary bar, conversational agent chat, analytics panel, and on-demand presentation generation](media/ui_screenshot.png)
+![LONGHAUL dashboard — KPI summary bar, conversational agent chat, analytics panel, and on-demand presentation generation](media/ui_screenshot1.png)
 
 *Example scenario: the LONGHAUL operational dashboard. Left — conversational agent answering a question about operating margin. Centre — KPI summary and analytics charts. Right — on-demand presentation generation.*
 
