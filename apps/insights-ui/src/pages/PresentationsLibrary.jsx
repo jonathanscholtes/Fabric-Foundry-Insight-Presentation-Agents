@@ -11,6 +11,16 @@ function triggerDownload(url, filename) {
   document.body.removeChild(a);
 }
 
+function formatGeneratedAt(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  });
+}
+
 function DeckCard({ deck }) {
   const [downloading, setDownloading] = useState(false);
 
@@ -32,10 +42,11 @@ function DeckCard({ deck }) {
   return (
     <div className="deck-card">
       <div className="deck-card-meta">
-        <span className="deck-card-title">{deck.region} — {deck.period}</span>
-        <span className="deck-card-date">
-          {deck.generated_at ? new Date(deck.generated_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : ''}
-        </span>
+        <div className="deck-card-titlerow">
+          <span className="deck-card-title">{deck.region} — {deck.period}</span>
+          <span className="deck-card-id" title={`Deck ID ${deck.deck_id}`}>{deck.deck_id}</span>
+        </div>
+        <span className="deck-card-date">Generated {formatGeneratedAt(deck.generated_at)}</span>
       </div>
       <div className="deck-card-actions">
         <button
@@ -59,7 +70,20 @@ export default function PresentationsLibrary() {
     staleTime: 2 * 60 * 1000,
   });
 
-  const decks = (data?.items ?? []).filter(d => {
+  // Collapse repeated generations: keep only the most recent deck per region+period.
+  const latestByRegionPeriod = [...(data?.items ?? [])]
+    .sort((a, b) => String(b.generated_at ?? '').localeCompare(String(a.generated_at ?? '')))
+    .reduce((acc, deck) => {
+      const key = `${deck.region ?? ''}|${deck.period ?? ''}`;
+      if (!acc.seen.has(key)) {
+        acc.seen.add(key);
+        acc.items.push(deck);
+      }
+      return acc;
+    }, { seen: new Set(), items: [] })
+    .items;
+
+  const decks = latestByRegionPeriod.filter(d => {
     if (!search) return true;
     const q = search.toLowerCase();
     return (d.region ?? '').toLowerCase().includes(q)
@@ -69,17 +93,24 @@ export default function PresentationsLibrary() {
   return (
     <div className="page-container">
       <header className="page-header">
-        <h1>Presentations</h1>
+        <div className="page-header-titles">
+          <h1>Presentations</h1>
+          {!isLoading && !isError && (
+            <span className="page-header-subtitle">
+              {decks.length} {decks.length === 1 ? 'presentation' : 'presentations'}
+            </span>
+          )}
+        </div>
         <input
           type="search"
-          placeholder="Search decks…"
+          placeholder="Search by region or period…"
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="library-search"
         />
       </header>
 
-      {isLoading && <div className="loading-state">Loading decks…</div>}
+      {isLoading && <div className="loading-state">Loading presentations…</div>}
       {isError   && <div className="error-state">Failed to load library.</div>}
 
       {!isLoading && !isError && decks.length === 0 && (

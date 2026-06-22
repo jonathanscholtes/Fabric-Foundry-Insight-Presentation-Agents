@@ -1,4 +1,14 @@
+import { useEffect, useState } from 'react'
 import { usePresentationGeneration } from '../hooks/usePresentationGeneration'
+
+function IconCheck() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  )
+}
 
 function IconDownload() {
   return (
@@ -32,6 +42,17 @@ const SLIDE_TITLES = [
   'Outlook & Actions',
 ]
 
+// Phases mirror the real backend pipeline; `at` is the elapsed second the step
+// becomes active. Timings are tuned to the typical 30–60s run — they are an
+// estimate, not server-reported progress.
+const GENERATION_STEPS = [
+  { label: 'Connecting to Azure AI Foundry', at: 0 },
+  { label: 'Querying Fabric Lakehouse for KPIs', at: 4 },
+  { label: 'Analyzing trends & composing insights', at: 13 },
+  { label: 'Building charts & assembling slides', at: 27 },
+  { label: 'Rendering preview & finalizing', at: 42 },
+]
+
 export default function PresentationPanel({ period, region }) {
   const { existingDeckQuery, generateMutation, downloadAgainMutation, activeDeckId } = usePresentationGeneration(period, region)
   const {
@@ -41,6 +62,22 @@ export default function PresentationPanel({ period, region }) {
     isError: genError,
   } = generateMutation
   const { mutate: downloadAgain, isPending: downloading } = downloadAgainMutation
+
+  // Drive the staged progress indicator off elapsed wall-clock time.
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (!generating) { setElapsed(0); return }
+    const start = Date.now()
+    const id = setInterval(() => setElapsed((Date.now() - start) / 1000), 200)
+    return () => clearInterval(id)
+  }, [generating])
+
+  // Ease toward 95% so the bar always moves but never "completes" before the
+  // request resolves; success state snaps it away.
+  const progress = Math.min(95, 95 * (1 - Math.exp(-elapsed / 15)))
+  const activeStep = GENERATION_STEPS.reduce((acc, s, i) => (elapsed >= s.at ? i : acc), 0)
+  const mm = Math.floor(elapsed / 60)
+  const ss = String(Math.floor(elapsed % 60)).padStart(2, '0')
 
   return (
     <div className="presentation-panel">
@@ -66,10 +103,35 @@ export default function PresentationPanel({ period, region }) {
         ))}
       </ul>
 
-      {genError && (
+      {generating && (
+        <div className="generation-progress" role="status" aria-live="polite">
+          <div className="gen-progress-header">
+            <span>Generating presentation…</span>
+            <span className="gen-progress-timer">{mm}:{ss}</span>
+          </div>
+          <div className="gen-progress-bar">
+            <div className="gen-progress-bar-fill" style={{ width: `${progress}%` }} />
+          </div>
+          <ul className="gen-steps">
+            {GENERATION_STEPS.map((s, i) => {
+              const state = i < activeStep ? 'done' : i === activeStep ? 'active' : 'pending'
+              return (
+                <li key={i} className={`gen-step gen-step--${state}`}>
+                  <span className="gen-step-icon">
+                    {state === 'done' ? <IconCheck /> : state === 'active' ? <span className="spinner" /> : null}
+                  </span>
+                  {s.label}
+                </li>
+              )
+            })}
+          </ul>
+          <div className="gen-progress-hint">This usually takes 30–60 seconds. Please keep this tab open.</div>
+        </div>
+      )}
+      {genError && !generating && (
         <div className="presentation-error">Generation failed — please try again.</div>
       )}
-      {genResult && !genError && (
+      {genResult && !genError && !generating && (
         <div className="presentation-success">
           Deck ready — download started automatically.
         </div>

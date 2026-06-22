@@ -16,6 +16,7 @@ from azure.identity import ManagedIdentityCredential, DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient, ContentSettings, generate_blob_sas, BlobSasPermissions
 from azure.storage.blob import UserDelegationKey
 from pptx import Presentation
+from pptx.chart.data import CategoryChartData
 from pptx.util import Pt
 
 from ..config import settings
@@ -152,10 +153,10 @@ def _build_kpi_tags(kpis: dict) -> dict[str, str]:
         "on_time_delivery":       _fmt_pct(otd["value"]),
         "on_time_delivery_delta": _fmt_delta_pp(otd["delta_pp"]),
         # Slide 3 — Revenue Performance
-        "revenue_prior":          "",
+        "revenue_prior":          _fmt_revenue(r["revenue_prior"]["value"]) if r.get("revenue_prior") else "",
         # Slide 4 — Cost Management
-        "total_cost":             "",
-        "total_cost_delta":       "",
+        "total_cost":             _fmt_revenue(r["total_cost"]["value"]) if r.get("total_cost") else "",
+        "total_cost_delta":       _fmt_delta_pct(r["total_cost"]["delta_pct"]) if r.get("total_cost") else "",
         # Slide 5 — Operational Efficiency
         "utilization_rate":       _fmt_pct(load_factor),
         "utilization_rate_delta": _fmt_delta_pp(load_factor_delta),
@@ -163,6 +164,58 @@ def _build_kpi_tags(kpis: dict) -> dict[str, str]:
         "sla_compliance_delta":   _fmt_delta_pp(otd["delta_pp"]),
         "efficiency_score":       "",
     }
+
+
+# ── Chart data population ──────────────────────────────────────────────────────
+
+def _fill_charts(prs, analytics: dict | None, kpis: dict, region: str) -> None:
+    """Replace data in the named chart shapes inserted into the template.
+
+    Charts are matched by ``shape.name`` (case-sensitive): ``revenue_trend_chart``,
+    ``cost_breakdown_chart``, ``sector_revenue_chart``. Any chart not present in the
+    template is silently skipped — so this is safe to ship before the manual
+    template update; it simply does nothing until the charts exist.
+
+    The code only replaces chart *data*; styling stays whatever the template defines.
+    """
+    if not analytics:
+        return
+
+    builders: dict[str, CategoryChartData] = {}
+
+    # Revenue trend — one series, 6 monthly points
+    trend = analytics.get("revenue_trend")
+    if trend:
+        cd = CategoryChartData()
+        cd.categories = [pt["period"] for pt in trend]
+        cd.add_series("Revenue ($M)", [pt["revenue"] for pt in trend])
+        builders["revenue_trend_chart"] = cd
+
+    # Cost breakdown — one series, one category per cost bucket
+    breakdown = analytics.get("cost_breakdown")
+    if breakdown:
+        cd = CategoryChartData()
+        cd.categories = list(breakdown.keys())
+        cd.add_series("Amount", list(breakdown.values()))
+        builders["cost_breakdown_chart"] = cd
+
+    # Sector revenue — one row per region from the kpis already available
+    # (single-region decks today; the chart still renders the current region's bar).
+    rev = kpis.get("total_revenue") if kpis else None
+    if rev and rev.get("value") is not None:
+        cd = CategoryChartData()
+        cd.categories = [region]
+        cd.add_series("Revenue ($M)", [round(rev["value"] / 1_000_000, 2)])
+        builders["sector_revenue_chart"] = cd
+
+    if not builders:
+        return
+
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if getattr(shape, "has_chart", False) and shape.name in builders:
+                shape.chart.replace_data(builders[shape.name])
+                logger.info("Filled chart shape: %s", shape.name)
 
 
 # ── LibreOffice thumbnail generation ──────────────────────────────────────────
@@ -237,12 +290,14 @@ def register_powerpoint_tools(mcp) -> None:
         period: str,
         kpis: dict,
         narratives: dict,
+        analytics: dict = None,
     ) -> dict:
         """Fill the MBR PowerPoint template with KPIs and narrative text blocks.
 
-        Downloads mbr_template.pptx, fills all {tag} placeholders, uploads the
-        completed deck, generates slide thumbnails with LibreOffice, and returns
-        the deck ID, deck URL, and thumbnail URLs.
+        Downloads mbr_template.pptx, fills all {tag} placeholders, populates any
+        chart shapes when analytics data is supplied, uploads the completed deck,
+        generates slide thumbnails with LibreOffice, and returns the deck ID,
+        deck URL, and thumbnail URLs.
 
         Args:
             region:     Region name, e.g. "North".
@@ -250,7 +305,11 @@ def register_powerpoint_tools(mcp) -> None:
             kpis:       Dict of KPI values and deltas from the Fabric Data Agent.
             narratives: Dict of text blocks: executive_summary, key_drivers,
                         cost_management, operational_efficiency, service_performance,
-                        bottom_line.
+                        bottom_line, call_to_action.
+            analytics:  Optional dict with chart data:
+                        {"revenue_trend": [{"period", "revenue"}, ...],
+                         "cost_breakdown": {"Fuel", "Labor", "Maintenance", "Other"}}.
+                        When omitted, charts are left as-is.
 
         Returns:
             {deck_id, deck_url, thumbnail_urls}
@@ -273,7 +332,7 @@ def register_powerpoint_tools(mcp) -> None:
             {
                 "mbr_period":       period,
                 "prepared_by":      "LONGHAUL AI",
-                "data_source_count": "1",
+                "data_source_count": "3",
             },
             # Slide 2 — Executive Summary
             {
@@ -284,7 +343,7 @@ def register_powerpoint_tools(mcp) -> None:
             # Slide 3 — Revenue Performance
             {
                 "mbr_period":       period,
-                "revenue_prior":    "",
+                "revenue_prior":    kpi_tags["revenue_prior"],
                 "total_revenue":    kpi_tags["total_revenue"],
                 "revenue_delta":    kpi_tags["revenue_delta"],
                 "revenue_insight_1": rev_insights[0],
@@ -295,8 +354,8 @@ def register_powerpoint_tools(mcp) -> None:
                 "mbr_period":         period,
                 "cost_per_hour":      kpi_tags["cost_per_hour"],
                 "cost_per_hour_delta": kpi_tags["cost_per_hour_delta"],
-                "total_cost":         "",
-                "total_cost_delta":   "",
+                "total_cost":         kpi_tags["total_cost"],
+                "total_cost_delta":   kpi_tags["total_cost_delta"],
                 "cost_insight_1":     cost_insights[0],
                 "cost_insight_2":     cost_insights[1],
             },
@@ -331,7 +390,7 @@ def register_powerpoint_tools(mcp) -> None:
                 "driver_3":           drivers[2],
                 "driver_4":           drivers[3],
                 "bottom_line_summary": narratives.get("bottom_line", ""),
-                "call_to_action":     "",
+                "call_to_action":     narratives.get("call_to_action", ""),
             },
             # Slide 8 — Data Sources & Methodology
             {
@@ -359,6 +418,9 @@ def register_powerpoint_tools(mcp) -> None:
             for idx, slide in enumerate(prs.slides):
                 if idx < len(slide_replacements):
                     _fill_slide(slide, slide_replacements[idx])
+
+            # Populate chart shapes (no-op until the Phase 2 template charts exist)
+            _fill_charts(prs, analytics, kpis, region)
 
             # Save filled deck
             deck_filename = f"{region}-{period_slug}-{deck_id}.pptx"

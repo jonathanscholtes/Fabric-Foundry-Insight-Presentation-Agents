@@ -1,4 +1,3 @@
-import RevenueLineChart from './charts/RevenueLineChart'
 import EfficiencyDonut from './charts/EfficiencyDonut'
 import ServiceBarChart from './charts/ServiceBarChart'
 
@@ -9,11 +8,9 @@ export default function AgentMessageContent({ content, key_drivers, analytics })
     return <span className="message-content">{content}</span>
   }
 
-  const revenueData = analytics?.revenue_performance?.data?.map(d => ({
-    period: d.month,
-    revenue: d.revenue / 1e6,
-  }))
-
+  // Revenue trend and the overall bottom-line summary are intentionally NOT
+  // rendered here — they live permanently in the dashboard's Analytics panel.
+  // The chat answers the specific question; it does not restate the dashboard.
   const serviceData = analytics?.service_performance?.data?.map(d => ({
     vehicle_type: d.label,
     pct: d.value,
@@ -42,13 +39,6 @@ export default function AgentMessageContent({ content, key_drivers, analytics })
 
       {analytics && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 14px 12px' }}>
-          {revenueData?.length > 0 && (
-            <div className="analytics-card">
-              <div className="analytics-card-title">Revenue Performance</div>
-              <RevenueLineChart data={revenueData} />
-            </div>
-          )}
-
           {analytics.cost_management?.narrative && (
             <div className="analytics-card">
               <div className="analytics-card-title">Cost Management</div>
@@ -72,13 +62,6 @@ export default function AgentMessageContent({ content, key_drivers, analytics })
             <div className="analytics-card">
               <div className="analytics-card-title">Service Performance</div>
               <ServiceBarChart data={serviceData} />
-            </div>
-          )}
-
-          {analytics.bottom_line?.narrative && (
-            <div className="analytics-card" style={{ borderColor: 'rgba(34,197,94,.3)' }}>
-              <div className="analytics-card-title" style={{ color: 'var(--accent)' }}>Bottom Line</div>
-              <p className="analytics-narrative">{analytics.bottom_line.narrative}</p>
             </div>
           )}
         </div>

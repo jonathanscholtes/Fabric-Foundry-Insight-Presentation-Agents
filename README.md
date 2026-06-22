@@ -75,6 +75,8 @@ To adapt: replace the Fabric Lakehouse tables with your domain data, update the 
 
 ## Architecture
 
+![Solution architecture — React UI and FastAPI on Azure Container Apps, Microsoft Foundry agents, Microsoft Fabric Lakehouse and Data Agent, Azure Storage, and a FastMCP presentation-tools service, with Key Vault, Managed Identity, and Application Insights](media/diagram.png)
+
 ```mermaid
 flowchart TD
     KV["🔐 Azure Key Vault\nAgent IDs · Secrets"]

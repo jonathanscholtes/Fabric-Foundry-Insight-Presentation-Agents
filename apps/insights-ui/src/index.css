@@ -921,6 +921,85 @@ button { font-family: inherit; }
   flex-shrink: 0;
 }
 
+/* Staged generation progress */
+.generation-progress {
+  margin: 4px 0 12px;
+  padding: 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.gen-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+.gen-progress-timer {
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted-2);
+}
+.gen-progress-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+.gen-progress-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width .4s ease;
+}
+.gen-steps {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+}
+.gen-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+  transition: color .2s;
+}
+.gen-step-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.gen-step--pending { color: var(--muted); }
+.gen-step--pending .gen-step-icon::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--muted);
+  box-sizing: border-box;
+}
+.gen-step--active { color: var(--text); font-weight: 600; }
+.gen-step--done { color: var(--muted-2); }
+.gen-step--done .gen-step-icon { color: var(--accent); }
+.gen-step .spinner { width: 14px; height: 14px; }
+.gen-progress-hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 12px;
+  text-align: center;
+}
+
 /* =========================================================
    Buttons
    ========================================================= */
@@ -1012,25 +1091,85 @@ button { font-family: inherit; }
 .muted { color: var(--muted); font-style: italic; }
 
 /* =========================================================
-   Deck / thread rows
+   Presentations library
    ========================================================= */
-.deck-row {
+.page-header {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.page-header h1 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+.page-header-titles { display: flex; align-items: baseline; gap: 10px; }
+.page-header-subtitle { font-size: 12.5px; color: var(--muted); }
+
+.library-search {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 7px;
-  margin-bottom: 8px;
-  cursor: pointer;
-  transition: border-color .15s, background .15s;
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: inherit;
+  padding: 8px 12px;
+  width: 240px;
+  outline: none;
+  transition: border-color .15s;
 }
-.deck-row:hover { background: var(--panel-2); border-color: var(--border-2); }
+.library-search:focus { border-color: var(--accent); }
+.library-search::placeholder { color: var(--muted); }
 
-.deck-row-info { display: flex; flex-direction: column; gap: 2px; }
-.deck-row-title { font-weight: 600; font-size: 14px; color: var(--text); }
-.deck-row-meta  { font-size: 12px; color: var(--muted-2); }
+.deck-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.deck-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  transition: border-color .15s, background .15s, transform .15s;
+}
+.deck-card:hover { background: var(--panel-2); border-color: var(--border-2); transform: translateY(-1px); }
+
+.deck-card-meta { display: flex; flex-direction: column; gap: 7px; }
+.deck-card-titlerow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.deck-card-title { font-weight: 600; font-size: 14px; color: var(--text); }
+.deck-card-id {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-family: monospace;
+  color: var(--muted);
+  background: var(--bg, rgba(0,0,0,.18));
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.deck-card-date { font-size: 12px; color: var(--muted-2); }
+
+.deck-card-actions { display: flex; }
+.deck-card-actions .btn { width: 100%; text-align: center; }
+
+.loading-state, .error-state {
+  text-align: center;
+  padding: 32px 16px;
+  font-size: 13px;
+}
+.loading-state { color: var(--muted); }
+.error-state   { color: var(--red); }
+
+.btn--sm { padding: 7px 12px; font-size: 12px; }
 
 .thread-row {
   display: flex;
