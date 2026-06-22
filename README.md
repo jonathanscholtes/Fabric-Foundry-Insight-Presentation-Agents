@@ -1,4 +1,4 @@
-# Conversational Agents for Operational Data with Microsoft Fabric and Foundry
+# Insight & Presentation Agents for Operational Data with Microsoft Fabric and Foundry
 ### End-to-End Example: Natural-Language Insight Discovery and Presentation Generation
 
 > [!WARNING]
