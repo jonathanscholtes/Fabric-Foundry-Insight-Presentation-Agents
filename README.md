@@ -26,7 +26,18 @@ This project demonstrates how to connect **Microsoft Fabric structured data** to
 
 *Example scenario: the LONGHAUL operational dashboard. Left — conversational agent answering a question about operating margin. Centre — KPI summary and analytics charts. Right — on-demand presentation generation.*
 
-**Example output:** [Download a sample generated deck (.pptx)](samples/LONGHAUL-MBR-South-May2025.pptx) — LONGHAUL Monthly Business Review for the South region, May 2025, produced by the Presentation Agent.
+<table>
+  <tr>
+    <td width="240" valign="middle">
+      <a href="samples/LONGHAUL-MBR-South-May2025.pptx"><img src="media/South-May2025-Page1.jpg" alt="Title slide of the generated South-region May 2025 Monthly Business Review deck" width="220"></a>
+    </td>
+    <td valign="middle">
+      <b>Example output</b><br>
+      A LONGHAUL Monthly Business Review for the South region, May 2025; generated end-to-end by the Presentation Agent.<br><br>
+      <a href="samples/LONGHAUL-MBR-South-May2025.pptx">⬇ Download the deck (.pptx)</a>
+    </td>
+  </tr>
+</table>
 
 ---
 
